@@ -66,7 +66,71 @@ function initRecords() {
 }
 
 function saveRecords() {
-  localStorage.setItem(STORAGE_KEY_RECORDS, JSON.stringify(records));
+  // 사진 데이터를 레코드에서 분리하여 별도 저장
+  const recordsWithoutPhotos = records.map(r => {
+    const { photo, ...rest } = r;
+    return rest;
+  });
+
+  try {
+    localStorage.setItem(STORAGE_KEY_RECORDS, JSON.stringify(recordsWithoutPhotos));
+  } catch (e) {
+    console.error('저장 오류:', e);
+    return;
+  }
+
+  // 각 레코드의 사진을 별도 키에 저장
+  records.forEach(r => {
+    const photoKey = STORAGE_KEY_RECORDS + '_photo_' + r.id;
+    if (r.photo) {
+      try {
+        localStorage.setItem(photoKey, r.photo);
+      } catch (e) {
+        // 사진 저장 용량 초과 시 오래된 사진 정리 후 재시도
+        console.warn('사진 저장 용량 초과, 오래된 사진을 삭제합니다.');
+        cleanOldPhotos(r.id);
+        try {
+          localStorage.setItem(photoKey, r.photo);
+        } catch (e2) {
+          console.error('사진 저장 최종 실패 (용량 부족):', e2);
+          // 사진만 메모리에서 유지하고 저장은 포기 (앱은 정상 동작)
+        }
+      }
+    } else {
+      // 사진이 null이면 관련 키 삭제
+      localStorage.removeItem(photoKey);
+    }
+  });
+}
+
+function cleanOldPhotos(exceptId) {
+  // 현재 레코드 ID 목록
+  const currentIds = new Set(records.map(r => r.id));
+  const keysToRemove = [];
+
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith(STORAGE_KEY_RECORDS + '_photo_')) {
+      const recordId = key.replace(STORAGE_KEY_RECORDS + '_photo_', '');
+      // 현재 레코드에 없는 고아 사진 삭제 대상
+      if (!currentIds.has(recordId)) {
+        keysToRemove.push(key);
+      }
+    }
+  }
+
+  // 오래된 사진 삭제
+  keysToRemove.forEach(k => localStorage.removeItem(k));
+
+  // 그래도 부족하면 가장 오래된 레코드의 사진 삭제
+  if (keysToRemove.length === 0) {
+    const oldest = [...records]
+      .sort((a, b) => new Date(a.time) - new Date(b.time))
+      .find(r => r.id !== exceptId && r.photo);
+    if (oldest) {
+      localStorage.removeItem(STORAGE_KEY_RECORDS + '_photo_' + oldest.id);
+    }
+  }
 }
 
 function generateDemoRecords() {
@@ -94,7 +158,7 @@ function generateDemoRecords() {
     {
       id: 'demo-2',
       type: 'sighting',
-      author: '민수',
+      author: '캐롤',
       time: t2.toISOString(),
       sightingStatus: '건강해 보여요',
       memo: '화단 아래 따뜻한 햇살에서 느긋하게 자고 있는 것 발견!',
@@ -104,7 +168,7 @@ function generateDemoRecords() {
     {
       id: 'demo-3',
       type: 'feeding',
-      author: '지은',
+      author: '차차',
       time: t3.toISOString(),
       foodType: '습식',
       catSeen: false,
