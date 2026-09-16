@@ -53,6 +53,8 @@
       }
     }
   </script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body class="antialiased selection:bg-primary/20">
@@ -66,20 +68,28 @@
           🐾
         </div>
         <div>
-          <h1 class="font-headline font-extrabold text-xl tracking-tight text-primary flex items-center gap-1">
+          <h1 class="font-headline font-extrabold text-xl tracking-tight text-primary flex items-center gap-1.5">
             밥먹었냥
+            <span id="cloud-sync-badge" class="inline-flex items-center px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-green-100 text-green-800 border border-green-300 shadow-xs">
+              ☁️ 실시간
+            </span>
           </h1>
-          <p class="text-[11px] text-on-surface-variant font-medium -mt-0.5">치즈 공동 돌봄 장부</p>
+          <p class="text-[11px] text-on-surface-variant font-medium -mt-0.5">치즈 공동 돌봄 장부 (Supabase)</p>
         </div>
       </div>
 
-      <!-- Kakao User Profile Button -->
-      <button id="user-profile-btn" onclick="openKakaoLoginModal()" class="flex items-center gap-2 bg-surface-container-low border-2 border-dashed border-outline-variant hover:border-primary px-3 py-1.5 rounded-full transition-all group">
-        <div id="header-user-avatar" class="w-6 h-6 rounded-full bg-kakao text-kakao-text font-bold text-xs flex items-center justify-center shadow-xs border border-amber-300">
-          🔑
+      <!-- Google User Profile Button -->
+      <button id="user-profile-btn" onclick="openGoogleLoginModal()" class="flex items-center gap-2 bg-surface-container-low border-2 border-dashed border-outline-variant hover:border-primary px-3 py-1.5 rounded-full transition-all group">
+        <div id="header-user-avatar" class="w-6 h-6 rounded-full overflow-hidden bg-white text-on-surface font-bold text-xs flex items-center justify-center shadow-xs border border-outline-variant">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24">
+            <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"/>
+            <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.34 24 12 24z"/>
+            <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/>
+            <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
+          </svg>
         </div>
-        <span id="header-user-name" class="text-xs font-bold text-on-surface max-w-[80px] truncate">
-          로그인
+        <span id="header-user-name" class="text-xs font-bold text-on-surface max-w-[90px] truncate">
+          Google 로그인
         </span>
         <span class="material-symbols-outlined text-[16px] text-on-surface-variant group-hover:text-primary transition-colors">
           expand_more
@@ -245,18 +255,24 @@
           </button>
         </div>
 
-        <!-- Active Logged In Kakao User Info -->
-        <div class="bg-amber-50 border border-amber-200 rounded-2xl p-2.5 mb-4 flex items-center justify-between">
+        <!-- Active Logged In Google User Info -->
+        <div class="bg-blue-50/90 border border-blue-200/80 rounded-2xl p-2.5 mb-4 flex items-center justify-between">
           <div class="flex items-center gap-2">
-            <div id="modal-user-avatar" class="w-6 h-6 rounded-full bg-kakao font-bold text-xs flex items-center justify-center border border-amber-300">
+            <div id="modal-user-avatar" class="w-7 h-7 rounded-full overflow-hidden bg-white text-xs flex items-center justify-center border border-blue-300 shadow-xs">
               👤
             </div>
-            <span class="text-xs font-bold text-amber-950">
-              작성자: <span id="modal-user-name">카카오 사용자</span>
-            </span>
+            <div>
+              <div class="text-xs font-bold text-blue-950 flex items-center gap-1">
+                <span>작성자:</span>
+                <span id="modal-user-name">Google 사용자</span>
+              </div>
+              <div id="modal-user-email" class="text-[10px] text-blue-700/80 font-medium truncate max-w-[170px]">
+                로그인 필요
+              </div>
+            </div>
           </div>
-          <button onclick="openKakaoLoginModal()" class="text-[11px] font-bold text-amber-800 underline">
-            계정 변경
+          <button type="button" onclick="openGoogleLoginModal()" class="text-xs font-bold text-blue-700 hover:text-blue-900 underline px-1">
+            계정 관리
           </button>
         </div>
 
@@ -281,35 +297,38 @@
 
           <!-- FEEDING OPTIONS -->
           <div id="feeding-fields">
-            <label class="block text-xs font-bold text-on-surface-variant mb-1.5">음식 종류 (필수)</label>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="block text-xs font-bold text-on-surface-variant">음식 종류 (중복 선택 가능)</label>
+              <span class="text-[11px] text-primary font-bold">다중 선택 ✓</span>
+            </div>
             <div class="grid grid-cols-3 gap-2 mb-3">
               <label class="cursor-pointer">
-                <input type="radio" name="foodType" value="사료" checked class="peer hidden">
-                <div class="text-center py-2 px-1 text-xs font-bold rounded-2xl border-2 border-outline-variant peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:text-primary transition-all">
+                <input type="checkbox" name="foodType" value="사료" checked class="peer hidden">
+                <div class="text-center py-2 px-1 text-xs font-bold rounded-2xl border-2 border-outline-variant peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:text-primary transition-all select-none">
                   🍚 사료
                 </div>
               </label>
               <label class="cursor-pointer">
-                <input type="radio" name="foodType" value="습식" class="peer hidden">
-                <div class="text-center py-2 px-1 text-xs font-bold rounded-2xl border-2 border-outline-variant peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:text-primary transition-all">
+                <input type="checkbox" name="foodType" value="습식" class="peer hidden">
+                <div class="text-center py-2 px-1 text-xs font-bold rounded-2xl border-2 border-outline-variant peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:text-primary transition-all select-none">
                   🥫 습식
                 </div>
               </label>
               <label class="cursor-pointer">
-                <input type="radio" name="foodType" value="닭가슴살" class="peer hidden">
-                <div class="text-center py-2 px-1 text-xs font-bold rounded-2xl border-2 border-outline-variant peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:text-primary transition-all">
+                <input type="checkbox" name="foodType" value="닭가슴살" class="peer hidden">
+                <div class="text-center py-2 px-1 text-xs font-bold rounded-2xl border-2 border-outline-variant peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:text-primary transition-all select-none">
                   🍗 닭가슴살
                 </div>
               </label>
               <label class="cursor-pointer">
-                <input type="radio" name="foodType" value="츄르" class="peer hidden">
-                <div class="text-center py-2 px-1 text-xs font-bold rounded-2xl border-2 border-outline-variant peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:text-primary transition-all">
+                <input type="checkbox" name="foodType" value="츄르" class="peer hidden">
+                <div class="text-center py-2 px-1 text-xs font-bold rounded-2xl border-2 border-outline-variant peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:text-primary transition-all select-none">
                   🍫 츄르
                 </div>
               </label>
               <label class="cursor-pointer">
-                <input type="radio" name="foodType" value="물" class="peer hidden">
-                <div class="text-center py-2 px-1 text-xs font-bold rounded-2xl border-2 border-outline-variant peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:text-primary transition-all">
+                <input type="checkbox" name="foodType" value="물" class="peer hidden">
+                <div class="text-center py-2 px-1 text-xs font-bold rounded-2xl border-2 border-outline-variant peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:text-primary transition-all select-none">
                   💧 물
                 </div>
               </label>
@@ -393,67 +412,69 @@
       </div>
     </div>
 
-    <!-- Modal 2: Kakao Login & Caretaker Account Switcher Modal -->
-    <div id="kakao-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-overlay p-4 animate-pop">
-      <div class="bg-surface w-full max-w-[360px] rounded-3xl border-2 border-outline-variant p-5 shadow-2xl">
+    <!-- Modal 2: Google Login & Account Management Modal -->
+    <div id="google-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-overlay p-4 animate-pop">
+      <div class="bg-surface w-full max-w-[370px] rounded-3xl border-2 border-outline-variant p-5 shadow-2xl">
         <div class="text-center mb-4">
-          <div class="w-12 h-12 rounded-full bg-kakao text-kakao-text mx-auto flex items-center justify-center text-2xl font-black mb-2 shadow-sm border border-amber-300">
-            💬
+          <div class="w-12 h-12 rounded-full bg-white mx-auto flex items-center justify-center mb-2 shadow-sm border border-outline-variant">
+            <svg class="w-6 h-6" viewBox="0 0 24 24">
+              <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"/>
+              <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.34 24 12 24z"/>
+              <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/>
+              <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
+            </svg>
           </div>
-          <h3 class="font-headline font-bold text-lg text-on-surface">카카오 계정 로그인</h3>
+          <h3 class="font-headline font-bold text-lg text-on-surface">Google 계정 로그인</h3>
           <p class="text-xs text-on-surface-variant mt-0.5">
-            급식 기록에 표시될 카카오 계정을 선택해주세요.
+            누구나 Google 계정으로 로그인하여 치즈의 급식 및 목격 기록을 남길 수 있습니다.
           </p>
         </div>
 
-        <!-- Preset Caretaker Accounts -->
-        <div class="space-y-2 mb-4">
-          <button onclick="selectKakaoPreset('태리')" class="w-full p-3 rounded-2xl border-2 border-outline-variant hover:border-amber-400 bg-surface-container-low flex items-center justify-between text-left transition-all group">
-            <div class="flex items-center gap-2.5">
-              <div class="w-8 h-8 rounded-full bg-amber-200 text-amber-900 font-bold text-xs flex items-center justify-center">태</div>
-              <div>
-                <div class="font-bold text-xs text-on-surface">태리</div>
-                <div class="text-[10px] text-on-surface-variant">고정 급식자 #1</div>
+        <!-- Current Logged In Profile Card (If logged in) -->
+        <div id="google-current-user-card" class="mb-4 p-3 bg-surface-container-low border-2 border-primary/30 rounded-2xl flex items-center justify-between">
+          <div class="flex items-center gap-2.5 truncate">
+            <div id="modal-card-avatar" class="w-9 h-9 rounded-full overflow-hidden bg-white border border-primary/40 flex items-center justify-center font-bold text-xs text-primary shadow-xs">
+              G
+            </div>
+            <div class="truncate">
+              <div id="modal-card-name" class="font-bold text-xs text-on-surface truncate">
+                로그인 안 됨
+              </div>
+              <div id="modal-card-email" class="text-[10px] text-on-surface-variant truncate">
+                로그인이 필요합니다
               </div>
             </div>
-            <span class="text-xs font-bold text-amber-700 opacity-0 group-hover:opacity-100 transition-opacity">선택 ➔</span>
-          </button>
-
-          <button onclick="selectKakaoPreset('캐롤')" class="w-full p-3 rounded-2xl border-2 border-outline-variant hover:border-amber-400 bg-surface-container-low flex items-center justify-between text-left transition-all group">
-            <div class="flex items-center gap-2.5">
-              <div class="w-8 h-8 rounded-full bg-sky-200 text-sky-900 font-bold text-xs flex items-center justify-center">캐</div>
-              <div>
-                <div class="font-bold text-xs text-on-surface">캐롤</div>
-                <div class="text-[10px] text-on-surface-variant">고정 급식자 #2</div>
-              </div>
-            </div>
-            <span class="text-xs font-bold text-amber-700 opacity-0 group-hover:opacity-100 transition-opacity">선택 ➔</span>
-          </button>
-
-          <button onclick="selectKakaoPreset('차차')" class="w-full p-3 rounded-2xl border-2 border-outline-variant hover:border-amber-400 bg-surface-container-low flex items-center justify-between text-left transition-all group">
-            <div class="flex items-center gap-2.5">
-              <div class="w-8 h-8 rounded-full bg-rose-200 text-rose-900 font-bold text-xs flex items-center justify-center">차</div>
-              <div>
-                <div class="font-bold text-xs text-on-surface">차차</div>
-                <div class="text-[10px] text-on-surface-variant">고정 급식자 #3</div>
-              </div>
-            </div>
-            <span class="text-xs font-bold text-amber-700 opacity-0 group-hover:opacity-100 transition-opacity">선택 ➔</span>
+          </div>
+          <button id="google-logout-btn" onclick="logoutGoogle()" class="text-[11px] font-bold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 px-2 py-1 rounded-xl transition-colors">
+            로그아웃
           </button>
         </div>
 
-        <!-- Custom Kakao Name Input -->
+        <!-- Real Google One-Tap / GIS Container (If Client ID is configured) -->
+        <div id="google-gis-container" class="mb-3 flex justify-center">
+          <div id="google-signin-btn"></div>
+        </div>
+
+        <!-- Direct / Quick Google Sign In -->
         <div class="pt-2 border-t border-surface-container-high">
-          <label class="block text-[11px] font-bold text-on-surface-variant mb-1">직접 카카오 닉네임 입력</label>
-          <div class="flex gap-2">
-            <input type="text" id="custom-kakao-name" placeholder="닉네임 입력..." class="flex-1 bg-surface-container-low border-2 border-outline-variant rounded-xl px-3 py-1.5 text-xs font-bold text-on-surface focus:outline-none focus:border-amber-400">
-            <button onclick="selectKakaoCustom()" class="btn-pressable btn-kakao px-3 py-1.5 rounded-xl text-xs font-bold">
-              입력
+          <label class="block text-[11px] font-bold text-on-surface-variant mb-1.5">이름 또는 Google 닉네임으로 바로 로그인</label>
+          <div class="space-y-2">
+            <input type="text" id="custom-google-name" placeholder="표시될 이름 / 닉네임 (예: 민들레, 홍길동)" class="w-full bg-surface-container-low border-2 border-outline-variant rounded-xl px-3 py-2 text-xs font-bold text-on-surface focus:outline-none focus:border-primary">
+            <input type="email" id="custom-google-email" placeholder="이메일 (선택, 예: name@gmail.com)" class="w-full bg-surface-container-low border-2 border-outline-variant rounded-xl px-3 py-2 text-xs font-medium text-on-surface focus:outline-none focus:border-primary">
+            
+            <button type="button" onclick="selectGoogleCustom()" class="w-full py-2.5 btn-pressable btn-google rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs">
+              <svg class="w-4 h-4" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"/>
+                <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.34 24 12 24z"/>
+                <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/>
+                <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
+              </svg>
+              <span>Google 계정으로 계속하기</span>
             </button>
           </div>
         </div>
 
-        <button onclick="closeKakaoLoginModal()" class="w-full mt-4 py-2 text-xs font-bold text-on-surface-variant hover:text-on-surface">
+        <button onclick="closeGoogleLoginModal()" class="w-full mt-4 py-2 text-xs font-bold text-on-surface-variant hover:text-on-surface">
           닫기
         </button>
 

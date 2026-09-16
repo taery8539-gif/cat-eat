@@ -113,6 +113,17 @@ body {
   border-bottom-width: 1px;
 }
 
+.btn-google {
+  background-color: #ffffff;
+  color: #3c4043;
+  font-weight: 700;
+  border: 1.5px solid #dadce0;
+  border-bottom: 3.5px solid #b8bac0;
+}
+.btn-google:active {
+  border-bottom-width: 1.5px;
+}
+
 /* Cat Floating & Animations */
 @keyframes float {
   0%, 100% { transform: translateY(0) rotate(0deg); }

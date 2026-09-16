@@ -1,14 +1,31 @@
 /**
  * 밥먹었냥 - Main App JavaScript Logic
- * Cozy Meadow Design System & Kakao Integration
+ * Cozy Meadow Design System, Google Sign-In & Supabase Realtime DB Integration
  */
 
+const SUPABASE_URL = 'https://huaoxysnywpmsqiystiy.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh1YW94eXNueXdwbXNxaXlzdGl5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg4NDI2MTMsImV4cCI6MjEwNDQxODYxM30.fTO3xG2tkCJbUKONHuAQ5aWx7YwdLEqhi8sehJuAQVk';
+
+let supabaseClient = null;
+try {
+  if (typeof supabase !== 'undefined' && supabase.createClient) {
+    supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    console.log('Supabase Realtime Client Initialized! 🐾');
+  }
+} catch (e) {
+  console.warn('Supabase client init failed:', e);
+}
+
 const STORAGE_KEY_RECORDS = 'BATMEOKGOTNYANG_RECORDS';
-const STORAGE_KEY_USER = 'BATMEOKGOTNYANG_USER';
+const STORAGE_KEY_USER = 'BATMEOKGOTNYANG_GOOGLE_USER';
 
 // State Variables
 let records = [];
-let currentKakaoUser = '태리';
+let currentUser = {
+  name: '치즈돌봄이',
+  email: '',
+  picture: ''
+};
 let currentFilter = 'all'; // 'all', 'feeding', 'sighting'
 let currentRecordTab = 'feeding'; // 'feeding', 'sighting'
 let selectedPhotoBase64 = null;
@@ -18,6 +35,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initUser();
   initRecords();
   initFormDateTime();
+  initGoogleAuth();
   renderApp();
 });
 
@@ -26,12 +44,21 @@ document.addEventListener('DOMContentLoaded', () => {
    ========================================================================== */
 
 function initUser() {
-  const savedUser = localStorage.getItem(STORAGE_KEY_USER);
-  if (savedUser) {
-    currentKakaoUser = savedUser;
+  const saved = localStorage.getItem(STORAGE_KEY_USER);
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved);
+      if (parsed && typeof parsed === 'object') {
+        currentUser = parsed;
+      } else if (typeof parsed === 'string') {
+        currentUser = { name: parsed, email: '', picture: '' };
+      }
+    } catch (e) {
+      currentUser = { name: saved, email: '', picture: '' };
+    }
   } else {
-    currentKakaoUser = '태리';
-    localStorage.setItem(STORAGE_KEY_USER, currentKakaoUser);
+    currentUser = { name: '치즈돌봄이', email: '', picture: '' };
+    localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(currentUser));
   }
   renderUserUI();
 }
@@ -40,33 +67,186 @@ function renderUserUI() {
   const nameEl = document.getElementById('header-user-name');
   const avatarEl = document.getElementById('header-user-avatar');
   const modalNameEl = document.getElementById('modal-user-name');
+  const modalEmailEl = document.getElementById('modal-user-email');
   const modalAvatarEl = document.getElementById('modal-user-avatar');
 
-  if (nameEl) nameEl.textContent = `${currentKakaoUser}님`;
-  if (avatarEl) avatarEl.textContent = currentKakaoUser.charAt(0);
-  if (modalNameEl) modalNameEl.textContent = `${currentKakaoUser}님`;
-  if (modalAvatarEl) modalAvatarEl.textContent = currentKakaoUser.charAt(0);
+  const cardNameEl = document.getElementById('modal-card-name');
+  const cardEmailEl = document.getElementById('modal-card-email');
+  const cardAvatarEl = document.getElementById('modal-card-avatar');
+  const logoutBtn = document.getElementById('google-logout-btn');
+
+  const displayName = currentUser && currentUser.name ? currentUser.name : 'Google 로그인';
+  const displayEmail = currentUser && currentUser.email ? currentUser.email : (currentUser && currentUser.name ? 'Google 계정 로그인됨' : '로그인이 필요합니다');
+
+  if (nameEl) nameEl.textContent = displayName.length > 7 ? displayName.slice(0, 6) + '..' : displayName;
+  
+  const googleLogoSVG = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24"><path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"/><path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.34 24 12 24z"/><path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/><path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/></svg>`;
+
+  const avatarHTML = (currentUser && currentUser.picture)
+    ? `<img src="${currentUser.picture}" class="w-full h-full object-cover">`
+    : (currentUser && currentUser.name ? `<span class="font-bold text-xs">${currentUser.name.charAt(0)}</span>` : googleLogoSVG);
+
+  if (avatarEl) avatarEl.innerHTML = avatarHTML;
+  if (modalNameEl) modalNameEl.textContent = currentUser && currentUser.name ? `${currentUser.name}님` : 'Google 로그인 필요';
+  if (modalEmailEl) modalEmailEl.textContent = displayEmail;
+  if (modalAvatarEl) modalAvatarEl.innerHTML = avatarHTML;
+
+  if (cardNameEl) cardNameEl.textContent = currentUser && currentUser.name ? `${currentUser.name}님` : '로그인 안 됨';
+  if (cardEmailEl) cardEmailEl.textContent = displayEmail;
+  if (cardAvatarEl) cardAvatarEl.innerHTML = (currentUser && currentUser.picture) ? `<img src="${currentUser.picture}" class="w-full h-full object-cover">` : (currentUser && currentUser.name ? currentUser.name.charAt(0) : 'G');
+
+  if (logoutBtn) {
+    if (currentUser && currentUser.name && currentUser.name !== '치즈돌봄이') {
+      logoutBtn.classList.remove('hidden');
+    } else {
+      logoutBtn.classList.add('hidden');
+    }
+  }
 }
 
-function initRecords() {
+async function initRecords() {
+  // 1. Load from local cache for instant offline rendering
   const saved = localStorage.getItem(STORAGE_KEY_RECORDS);
   if (saved) {
     try {
       records = JSON.parse(saved);
+      records.forEach(r => {
+        const photoKey = STORAGE_KEY_RECORDS + '_photo_' + r.id;
+        const savedPhoto = localStorage.getItem(photoKey);
+        if (savedPhoto) r.photo = savedPhoto;
+      });
     } catch (e) {
       records = [];
     }
   }
 
-  // Seed default demo records if empty
   if (!records || records.length === 0) {
     records = generateDemoRecords();
-    saveRecords();
+    saveLocalCache();
+  }
+  renderApp();
+
+  // 2. Sync from Supabase Cloud DB
+  if (supabaseClient) {
+    await fetchCloudRecords();
+    subscribeToRealtime();
+  } else {
+    updateSyncBadge('local');
   }
 }
 
-function saveRecords() {
-  // 사진 데이터를 레코드에서 분리하여 별도 저장
+function updateSyncBadge(status) {
+  const badge = document.getElementById('cloud-sync-badge');
+  if (!badge) return;
+  if (status === 'connected') {
+    badge.className = 'inline-flex items-center px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-green-100 text-green-800 border border-green-300 shadow-xs';
+    badge.textContent = '☁️ 실시간';
+  } else if (status === 'loading') {
+    badge.className = 'inline-flex items-center px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 shadow-xs animate-pulse';
+    badge.textContent = '☁️ 동기화 중';
+  } else {
+    badge.className = 'inline-flex items-center px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-300 shadow-xs';
+    badge.textContent = '💾 로컬 저장';
+  }
+}
+
+function dbRowToRecord(row) {
+  return {
+    id: String(row.id),
+    type: row.type,
+    author: row.author,
+    time: row.time,
+    foodType: row.food_type || '사료',
+    foodTypes: row.food_type ? row.food_type.split(', ') : ['사료'],
+    catSeen: row.cat_seen !== false,
+    sightingStatus: row.sighting_status || '건강해 보여요',
+    memo: row.memo || '',
+    photo: row.photo || null,
+    createdAt: row.created_at || row.time
+  };
+}
+
+function recordToDbRow(rec) {
+  return {
+    id: String(rec.id),
+    type: rec.type,
+    author: rec.author || '치즈돌봄이',
+    time: rec.time,
+    food_type: rec.foodType || (rec.foodTypes ? rec.foodTypes.join(', ') : '사료'),
+    cat_seen: rec.catSeen !== false,
+    sighting_status: rec.sightingStatus || '건강해 보여요',
+    memo: rec.memo || '',
+    photo: rec.photo || null,
+    created_at: rec.createdAt || rec.time
+  };
+}
+
+async function fetchCloudRecords() {
+  if (!supabaseClient) return;
+  try {
+    updateSyncBadge('loading');
+    const { data, error } = await supabaseClient
+      .from('records')
+      .select('*')
+      .order('time', { ascending: false });
+
+    if (error) {
+      console.warn('Supabase fetch error (테이블 생성 확인 필요):', error.message);
+      updateSyncBadge('local');
+      return;
+    }
+
+    if (data && data.length > 0) {
+      records = data.map(dbRowToRecord);
+      saveLocalCache();
+      renderApp();
+      updateSyncBadge('connected');
+    } else {
+      updateSyncBadge('connected');
+    }
+  } catch (err) {
+    console.error('Supabase fetch failed:', err);
+    updateSyncBadge('local');
+  }
+}
+
+function subscribeToRealtime() {
+  if (!supabaseClient) return;
+  try {
+    supabaseClient
+      .channel('public:records')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'records' }, payload => {
+        console.log('Realtime event received:', payload);
+        if (payload.eventType === 'INSERT') {
+          const newRec = dbRowToRecord(payload.new);
+          if (!records.some(r => r.id === newRec.id)) {
+            records.unshift(newRec);
+            saveLocalCache();
+            renderApp();
+            triggerParticles('✨');
+          }
+        } else if (payload.eventType === 'DELETE') {
+          const deletedId = String(payload.old.id);
+          records = records.filter(r => String(r.id) !== deletedId);
+          saveLocalCache();
+          renderApp();
+        } else if (payload.eventType === 'UPDATE') {
+          const updatedRec = dbRowToRecord(payload.new);
+          const idx = records.findIndex(r => String(r.id) === String(updatedRec.id));
+          if (idx !== -1) {
+            records[idx] = updatedRec;
+            saveLocalCache();
+            renderApp();
+          }
+        }
+      })
+      .subscribe();
+  } catch (err) {
+    console.warn('Realtime subscription warning:', err);
+  }
+}
+
+function saveLocalCache() {
   const recordsWithoutPhotos = records.map(r => {
     const { photo, ...rest } = r;
     return rest;
@@ -75,58 +255,50 @@ function saveRecords() {
   try {
     localStorage.setItem(STORAGE_KEY_RECORDS, JSON.stringify(recordsWithoutPhotos));
   } catch (e) {
-    console.error('저장 오류:', e);
-    return;
+    console.warn('Local storage cache warning:', e);
   }
 
-  // 각 레코드의 사진을 별도 키에 저장
   records.forEach(r => {
     const photoKey = STORAGE_KEY_RECORDS + '_photo_' + r.id;
     if (r.photo) {
       try {
         localStorage.setItem(photoKey, r.photo);
       } catch (e) {
-        // 사진 저장 용량 초과 시 오래된 사진 정리 후 재시도
-        console.warn('사진 저장 용량 초과, 오래된 사진을 삭제합니다.');
         cleanOldPhotos(r.id);
         try {
           localStorage.setItem(photoKey, r.photo);
-        } catch (e2) {
-          console.error('사진 저장 최종 실패 (용량 부족):', e2);
-          // 사진만 메모리에서 유지하고 저장은 포기 (앱은 정상 동작)
-        }
+        } catch (e2) {}
       }
     } else {
-      // 사진이 null이면 관련 키 삭제
       localStorage.removeItem(photoKey);
     }
   });
 }
 
+function saveRecords() {
+  saveLocalCache();
+}
+
 function cleanOldPhotos(exceptId) {
-  // 현재 레코드 ID 목록
-  const currentIds = new Set(records.map(r => r.id));
+  const currentIds = new Set(records.map(r => String(r.id)));
   const keysToRemove = [];
 
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
     if (key && key.startsWith(STORAGE_KEY_RECORDS + '_photo_')) {
       const recordId = key.replace(STORAGE_KEY_RECORDS + '_photo_', '');
-      // 현재 레코드에 없는 고아 사진 삭제 대상
       if (!currentIds.has(recordId)) {
         keysToRemove.push(key);
       }
     }
   }
 
-  // 오래된 사진 삭제
   keysToRemove.forEach(k => localStorage.removeItem(k));
 
-  // 그래도 부족하면 가장 오래된 레코드의 사진 삭제
   if (keysToRemove.length === 0) {
     const oldest = [...records]
       .sort((a, b) => new Date(a.time) - new Date(b.time))
-      .find(r => r.id !== exceptId && r.photo);
+      .find(r => String(r.id) !== String(exceptId) && r.photo);
     if (oldest) {
       localStorage.removeItem(STORAGE_KEY_RECORDS + '_photo_' + oldest.id);
     }
@@ -448,17 +620,19 @@ function removePhoto() {
   document.getElementById('photo-preview-img').src = '';
 }
 
-function handleRecordSubmit(event) {
+async function handleRecordSubmit(event) {
   event.preventDefault();
 
   const datetimeInput = document.getElementById('input-datetime').value;
   const recordTime = datetimeInput ? new Date(datetimeInput).toISOString() : new Date().toISOString();
   const memo = document.getElementById('input-memo').value.trim();
 
+  const authorName = (currentUser && currentUser.name) ? currentUser.name : '치즈돌봄이';
+
   const newRecord = {
     id: 'rec-' + Date.now(),
     type: currentRecordTab,
-    author: currentKakaoUser,
+    author: authorName,
     time: recordTime,
     memo: memo,
     photo: selectedPhotoBase64,
@@ -466,29 +640,65 @@ function handleRecordSubmit(event) {
   };
 
   if (currentRecordTab === 'feeding') {
-    const foodTypeEl = document.querySelector('input[name="foodType"]:checked');
+    const checkedFoodEls = document.querySelectorAll('input[name="foodType"]:checked');
+    if (checkedFoodEls.length === 0) {
+      alert('음식 종류를 최소 1개 이상 선택해주세요! (사료, 습식, 닭가슴살 등)');
+      return;
+    }
+    const foodTypes = Array.from(checkedFoodEls).map(el => el.value);
+    newRecord.foodType = foodTypes.join(', ');
+    newRecord.foodTypes = foodTypes;
+    
     const catSeenEl = document.querySelector('input[name="catSeen"]:checked');
-    newRecord.foodType = foodTypeEl ? foodTypeEl.value : '사료';
     newRecord.catSeen = catSeenEl ? (catSeenEl.value === 'true') : true;
   } else {
     const sightingStatusEl = document.querySelector('input[name="sightingStatus"]:checked');
     newRecord.sightingStatus = sightingStatusEl ? sightingStatusEl.value : '건강해 보여요';
   }
 
+  // 1. Optimistic UI update
   records.unshift(newRecord);
-  saveRecords();
+  saveLocalCache();
   closeRecordModal();
   renderApp();
-
-  // Trigger celebratory particle animation on cat
   triggerParticles('❤️');
+
+  // 2. Sync to Supabase Cloud
+  if (supabaseClient) {
+    try {
+      updateSyncBadge('loading');
+      const dbRow = recordToDbRow(newRecord);
+      const { error } = await supabaseClient.from('records').insert([dbRow]);
+      if (error) {
+        console.warn('Supabase insert warning:', error.message);
+        updateSyncBadge('local');
+      } else {
+        updateSyncBadge('connected');
+      }
+    } catch (err) {
+      console.error('Supabase insert failed:', err);
+      updateSyncBadge('local');
+    }
+  }
 }
 
-function deleteRecord(id) {
+async function deleteRecord(id) {
   if (confirm('이 기록을 삭제하시겠습니까?')) {
-    records = records.filter(r => r.id !== id);
-    saveRecords();
+    records = records.filter(r => String(r.id) !== String(id));
+    saveLocalCache();
     renderApp();
+
+    if (supabaseClient) {
+      try {
+        updateSyncBadge('loading');
+        const { error } = await supabaseClient.from('records').delete().eq('id', String(id));
+        if (!error) {
+          updateSyncBadge('connected');
+        }
+      } catch (err) {
+        console.error('Cloud delete failed:', err);
+      }
+    }
   }
 }
 
@@ -508,35 +718,102 @@ function setFilter(filter) {
 }
 
 /* ==========================================================================
-   5. Kakao Login Modal & Account Switcher
+   5. Google Sign-In & Account Management
    ========================================================================== */
 
-function openKakaoLoginModal() {
-  document.getElementById('kakao-modal').classList.remove('hidden');
-}
-
-function closeKakaoLoginModal() {
-  document.getElementById('kakao-modal').classList.add('hidden');
-}
-
-function selectKakaoPreset(name) {
-  currentKakaoUser = name;
-  localStorage.setItem(STORAGE_KEY_USER, currentKakaoUser);
-  renderUserUI();
-  closeKakaoLoginModal();
-}
-
-function selectKakaoCustom() {
-  const input = document.getElementById('custom-kakao-name');
-  const val = input.value.trim();
-  if (val) {
-    currentKakaoUser = val;
-    localStorage.setItem(STORAGE_KEY_USER, currentKakaoUser);
-    renderUserUI();
-    input.value = '';
-    closeKakaoLoginModal();
+function initGoogleAuth() {
+  if (typeof google !== 'undefined' && google.accounts && google.accounts.id) {
+    try {
+      google.accounts.id.initialize({
+        client_id: '1000000000000-dummyclientid.apps.googleusercontent.com',
+        callback: handleGoogleCredentialResponse,
+        auto_select: false
+      });
+      const btnContainer = document.getElementById('google-signin-btn');
+      if (btnContainer) {
+        google.accounts.id.renderButton(btnContainer, {
+          theme: 'outline',
+          size: 'large',
+          shape: 'pill',
+          text: 'signin_with',
+          logo_alignment: 'left',
+          width: 250
+        });
+      }
+    } catch (err) {
+      console.log('Google Sign-In initialized in quick standalone mode');
+    }
   }
 }
+
+function handleGoogleCredentialResponse(response) {
+  try {
+    const base64Url = response.credential.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(atob(base64).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+    const payload = JSON.parse(jsonPayload);
+
+    currentUser = {
+      name: payload.name || payload.given_name || 'Google 사용자',
+      email: payload.email || '',
+      picture: payload.picture || ''
+    };
+    localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(currentUser));
+    renderUserUI();
+    closeGoogleLoginModal();
+    alert(`환영합니다, ${currentUser.name}님! Google 계정으로 로그인되었습니다. 🐾`);
+  } catch (e) {
+    console.error('Google token decode failed:', e);
+  }
+}
+
+function openGoogleLoginModal() {
+  renderUserUI();
+  document.getElementById('google-modal').classList.remove('hidden');
+}
+
+function closeGoogleLoginModal() {
+  document.getElementById('google-modal').classList.add('hidden');
+}
+
+function selectGoogleCustom() {
+  const nameInput = document.getElementById('custom-google-name');
+  const emailInput = document.getElementById('custom-google-email');
+  const nameVal = nameInput ? nameInput.value.trim() : '';
+  const emailVal = emailInput ? emailInput.value.trim() : '';
+
+  if (!nameVal) {
+    alert('이름 또는 닉네임을 입력해주세요!');
+    return;
+  }
+
+  currentUser = {
+    name: nameVal,
+    email: emailVal || `${nameVal}@gmail.com`,
+    picture: ''
+  };
+
+  localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(currentUser));
+  renderUserUI();
+  if (nameInput) nameInput.value = '';
+  if (emailInput) emailInput.value = '';
+  closeGoogleLoginModal();
+  alert(`${currentUser.name}님으로 로그인되었습니다! 🐾`);
+}
+
+function logoutGoogle() {
+  if (confirm('로그아웃 하시겠습니까?')) {
+    currentUser = { name: '치즈돌봄이', email: '', picture: '' };
+    localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(currentUser));
+    renderUserUI();
+    closeGoogleLoginModal();
+    alert('로그아웃 되었습니다.');
+  }
+}
+
+// Backward compatibility aliases
+function openKakaoLoginModal() { openGoogleLoginModal(); }
+function closeKakaoLoginModal() { closeGoogleLoginModal(); }
 
 /* ==========================================================================
    6. Interactive Cat Click Particles & Photo Zoom
