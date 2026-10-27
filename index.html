@@ -59,10 +59,10 @@
 </head>
 <body class="antialiased selection:bg-primary/20">
 
-  <div id="app-wrapper" class="bg-grain">
+  <div id="app-wrapper" class="bg-grain auth-locked">
     
     <!-- Top Header -->
-    <header class="sticky top-0 z-40 bg-surface/90 backdrop-blur-md px-5 py-3.5 border-b border-surface-container-high flex items-center justify-between shadow-sm">
+    <header class="app-shell sticky top-0 z-40 bg-surface/90 backdrop-blur-md px-5 py-3.5 border-b border-surface-container-high flex items-center justify-between shadow-sm">
       <div class="flex items-center gap-2">
         <div class="w-9 h-9 rounded-2xl bg-primary/10 border-2 border-primary/20 flex items-center justify-center text-primary font-bold shadow-inner">
           🐾
@@ -98,7 +98,7 @@
     </header>
 
     <!-- Main Content Area -->
-    <main class="flex-1 pb-28 px-4 pt-4 relative">
+    <main class="app-shell flex-1 pb-28 px-4 pt-4 relative">
       
       <!-- Hero / Cat Stage Section -->
       <section class="flex flex-col items-center pt-3 pb-6 relative" id="cat-stage">
@@ -233,7 +233,7 @@
     </main>
 
     <!-- Floating Action Button (FAB) -->
-    <div class="fixed bottom-6 right-1/2 translate-x-[180px] max-w-[440px] z-30">
+    <div class="app-shell fixed bottom-6 right-1/2 translate-x-[180px] max-w-[440px] z-30">
       <button onclick="openRecordModal()" class="btn-pressable btn-primary px-5 py-3.5 rounded-full font-headline font-bold text-base flex items-center gap-2 shadow-lg hover:scale-105 active:scale-95 transition-transform">
         <span class="material-symbols-outlined text-2xl">add</span>
         기록 등록
@@ -474,9 +474,12 @@
           </div>
         </div>
 
-        <button onclick="closeGoogleLoginModal()" class="w-full mt-4 py-2 text-xs font-bold text-on-surface-variant hover:text-on-surface">
+        <button id="google-modal-close-btn" onclick="closeGoogleLoginModal()" class="w-full mt-4 py-2 text-xs font-bold text-on-surface-variant hover:text-on-surface">
           닫기
         </button>
+        <p id="google-modal-gate-note" class="hidden text-center text-[11px] text-on-surface-variant mt-3">
+          로그인 후 치즈의 기록을 보고 남길 수 있어요 🐾
+        </p>
 
       </div>
     </div>

@@ -18,6 +18,7 @@ try {
 
 const STORAGE_KEY_RECORDS = 'BATMEOKGOTNYANG_RECORDS';
 const STORAGE_KEY_USER = 'BATMEOKGOTNYANG_GOOGLE_USER';
+const STORAGE_KEY_LOGGED_IN = 'BATMEOKGOTNYANG_LOGGED_IN';
 
 // State Variables
 let records = [];
@@ -37,7 +38,53 @@ document.addEventListener('DOMContentLoaded', () => {
   initFormDateTime();
   initGoogleAuth();
   renderApp();
+  checkAuthGate();
 });
+
+/* ==========================================================================
+   0. Auth Gate (must be logged in before the main app is shown)
+   ========================================================================== */
+
+function isLoggedIn() {
+  return localStorage.getItem(STORAGE_KEY_LOGGED_IN) === 'true';
+}
+
+function checkAuthGate() {
+  if (isLoggedIn()) {
+    unlockApp();
+  } else {
+    lockApp();
+  }
+}
+
+// Hides the whole app behind the login modal and prevents it from being dismissed
+function lockApp() {
+  const wrapper = document.getElementById('app-wrapper');
+  if (wrapper) wrapper.classList.add('auth-locked');
+
+  const closeBtn = document.getElementById('google-modal-close-btn');
+  if (closeBtn) closeBtn.classList.add('hidden');
+  const gateNote = document.getElementById('google-modal-gate-note');
+  if (gateNote) gateNote.classList.remove('hidden');
+
+  renderUserUI();
+  const modal = document.getElementById('google-modal');
+  if (modal) modal.classList.remove('hidden');
+}
+
+// Reveals the app and restores normal (dismissable) modal behavior
+function unlockApp() {
+  const wrapper = document.getElementById('app-wrapper');
+  if (wrapper) wrapper.classList.remove('auth-locked');
+
+  const closeBtn = document.getElementById('google-modal-close-btn');
+  if (closeBtn) closeBtn.classList.remove('hidden');
+  const gateNote = document.getElementById('google-modal-gate-note');
+  if (gateNote) gateNote.classList.add('hidden');
+
+  const modal = document.getElementById('google-modal');
+  if (modal) modal.classList.add('hidden');
+}
 
 /* ==========================================================================
    1. User & Storage Initialization
@@ -759,8 +806,9 @@ function handleGoogleCredentialResponse(response) {
       picture: payload.picture || ''
     };
     localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(currentUser));
+    localStorage.setItem(STORAGE_KEY_LOGGED_IN, 'true');
     renderUserUI();
-    closeGoogleLoginModal();
+    unlockApp();
     alert(`환영합니다, ${currentUser.name}님! Google 계정으로 로그인되었습니다. 🐾`);
   } catch (e) {
     console.error('Google token decode failed:', e);
@@ -773,6 +821,8 @@ function openGoogleLoginModal() {
 }
 
 function closeGoogleLoginModal() {
+  // While the auth gate is active (not logged in yet), the modal cannot be dismissed.
+  if (!isLoggedIn()) return;
   document.getElementById('google-modal').classList.add('hidden');
 }
 
@@ -794,10 +844,11 @@ function selectGoogleCustom() {
   };
 
   localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(currentUser));
+  localStorage.setItem(STORAGE_KEY_LOGGED_IN, 'true');
   renderUserUI();
   if (nameInput) nameInput.value = '';
   if (emailInput) emailInput.value = '';
-  closeGoogleLoginModal();
+  unlockApp();
   alert(`${currentUser.name}님으로 로그인되었습니다! 🐾`);
 }
 
@@ -805,8 +856,9 @@ function logoutGoogle() {
   if (confirm('로그아웃 하시겠습니까?')) {
     currentUser = { name: '치즈돌봄이', email: '', picture: '' };
     localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(currentUser));
+    localStorage.setItem(STORAGE_KEY_LOGGED_IN, 'false');
     renderUserUI();
-    closeGoogleLoginModal();
+    lockApp();
     alert('로그아웃 되었습니다.');
   }
 }

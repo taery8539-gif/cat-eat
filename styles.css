@@ -192,3 +192,8 @@ body {
   background-color: rgba(27, 28, 21, 0.55);
   backdrop-filter: blur(4px);
 }
+
+/* Auth Gate: hide the main app shell entirely until the user logs in */
+#app-wrapper.auth-locked .app-shell {
+  display: none !important;
+}
