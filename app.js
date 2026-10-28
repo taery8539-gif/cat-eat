@@ -58,8 +58,11 @@ function initAuth() {
   });
 }
 
+let handlingUserId = null;   // 지금 허용 여부를 확인 중인 사용자 (같은 사용자의 중복 확인 방지)
+
 async function handleSession(session) {
   if (!session || !session.user) {
+    handlingUserId = null;
     if (activeUserId) stopCloudData();
     activeUserId = null;
     currentUser = { name: '', email: '', picture: '' };
@@ -67,18 +70,29 @@ async function handleSession(session) {
     lockApp();
     return;
   }
-  if (session.user.id === activeUserId) return; // 토큰 갱신 등으로 같은 사용자가 다시 알려진 경우
+  const uid = session.user.id;
+  if (uid === activeUserId || uid === handlingUserId) return; // 이미 확인했거나 확인 중
 
+  handlingUserId = uid;
   const email = session.user.email || '';
-  const allowed = await checkAllowed();
-  if (!allowed) {
+  const result = await checkAllowedWithRetry();
+  if (handlingUserId !== uid) return;   // 확인하는 사이 로그아웃된 경우
+  handlingUserId = null;
+
+  if (result === 'error') {
+    // 확인 자체가 실패한 것: 멤버가 아니라는 뜻이 아니므로 로그아웃시키지 않는다
+    showAuthMessage('로그인 확인 중 문제가 생겼어요. 잠시 뒤 페이지를 새로고침해 주세요.');
+    lockApp();
+    return;
+  }
+  if (result === 'denied') {
     await supabaseClient.auth.signOut();
     showAuthMessage(`${email} 계정은 등록된 멤버가 아니에요. 등록된 구글 계정으로 로그인해 주세요.`);
     return;
   }
 
   const meta = session.user.user_metadata || {};
-  activeUserId = session.user.id;
+  activeUserId = uid;
   currentUser = {
     name: meta.full_name || meta.name || email.split('@')[0] || '치즈돌봄이',
     email: email,
@@ -90,19 +104,27 @@ async function handleSession(session) {
   startCloudData();
 }
 
-// DB의 is_allowed() 함수가 로그인한 이메일이 allowed_emails에 있는지 알려준다
-async function checkAllowed() {
-  try {
-    const { data, error } = await supabaseClient.rpc('is_allowed');
-    if (error) {
-      console.warn('is_allowed check failed:', error.message);
-      return false;
+// DB의 is_allowed()로 허용 여부 확인. 로그인 직후에는 첫 확인이 실패하거나 false로 나올 수 있어 몇 번 다시 확인한다.
+// 반환: 'allowed' | 'denied'(여러 번 확인해도 목록에 없음) | 'error'(확인 자체가 계속 실패)
+async function checkAllowedWithRetry() {
+  const delays = [0, 700, 1500];
+  let sawFalse = false;
+  for (let i = 0; i < delays.length; i++) {
+    if (delays[i]) await new Promise(r => setTimeout(r, delays[i]));
+    try {
+      const { data, error } = await supabaseClient.rpc('is_allowed');
+      if (error) {
+        console.warn(`is_allowed check ${i + 1} failed:`, error.message);
+        continue;
+      }
+      if (data === true) return 'allowed';
+      sawFalse = true;
+      console.warn(`is_allowed check ${i + 1}: not allowed yet (data=${data})`);
+    } catch (e) {
+      console.warn(`is_allowed check ${i + 1} threw:`, e);
     }
-    return data === true;
-  } catch (e) {
-    console.error('is_allowed check error:', e);
-    return false;
   }
+  return sawFalse ? 'denied' : 'error';
 }
 
 async function signInWithGoogle() {
