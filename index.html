@@ -185,11 +185,6 @@
             <h2 class="font-headline font-bold text-lg text-on-surface">치즈의 기록</h2>
             <span id="history-count" class="text-xs font-bold text-on-surface-variant bg-surface-container px-2 py-0.5 rounded-full">0건</span>
           </div>
-
-          <!-- Quick Test Demo Options Menu Toggle -->
-          <button onclick="toggleDemoDrawer()" class="text-xs text-on-surface-variant underline hover:text-primary font-medium">
-            시연 도구 ⚙️
-          </button>
         </div>
 
         <!-- Filter Tabs -->
@@ -211,23 +206,6 @@
         </div>
 
       </section>
-
-      <!-- Demo Options Drawer (Collapsible) -->
-      <div id="demo-drawer" class="hidden mt-6 p-4 bg-surface-container-low border-2 border-dashed border-outline-variant rounded-2xl text-xs space-y-2">
-        <div class="font-bold text-on-surface flex items-center justify-between">
-          <span>⚙️ MVP 시연 및 테스트 도구</span>
-          <button onclick="toggleDemoDrawer()" class="text-on-surface-variant">✕</button>
-        </div>
-        <p class="text-on-surface-variant">버튼을 눌러 24시간 경과 상태를 즉시 테스트해볼 수 있습니다.</p>
-        <div class="flex flex-wrap gap-2 pt-1">
-          <button onclick="simulate24hPassed()" class="btn-pressable px-3 py-1.5 bg-amber-100 text-amber-900 font-bold rounded-xl border border-amber-300">
-            🚨 24시간 이상 경과 시뮬레이션
-          </button>
-          <button onclick="simulateResetDemoData()" class="btn-pressable px-3 py-1.5 bg-slate-100 text-slate-800 font-bold rounded-xl border border-slate-300">
-            🔄 시연 데이터 초기화
-          </button>
-        </div>
-      </div>
 
     </main>
 

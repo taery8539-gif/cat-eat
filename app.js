@@ -1060,33 +1060,6 @@ function closePhotoZoom() {
 }
 
 /* ==========================================================================
-   7. Demo Helpers (24h Simulation & Reset)
-   ========================================================================== */
-
-function toggleDemoDrawer() {
-  document.getElementById('demo-drawer').classList.toggle('hidden');
-}
-
-function simulate24hPassed() {
-  const twentyFiveHoursAgo = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
-  records.forEach(r => {
-    if (r.type === 'feeding') {
-      r.time = twentyFiveHoursAgo;
-    }
-  });
-  saveRecords();
-  renderApp();
-  alert('마지막 급식 시간을 25시간 전으로 변경했습니다. 🚨 경고 상태를 확인하세요!');
-}
-
-function simulateResetDemoData() {
-  records = generateDemoRecords();
-  saveRecords();
-  renderApp();
-  alert('시연용 초기 데이터로 복구되었습니다!');
-}
-
-/* ==========================================================================
    8. Utility Helpers
    ========================================================================== */
 
@@ -1159,7 +1132,6 @@ function escapeHTML(str) {
    - 낮: 06:00~17:59, 밤: 18:00~05:59 (기기의 현재 시각 기준)
    ========================================================================== */
 
-let sceneOverride = null;   // 시연 도구에서 고른 값 { season?, tod? } (새로고침하면 자동으로 돌아옴)
 let sceneKey = '';
 let sceneObserver = null;
 
@@ -1175,10 +1147,6 @@ function getSceneState() {
     const [qs, qt] = q.split('-');
     if (['spring', 'summer', 'autumn', 'winter'].includes(qs)) season = qs;
     if (['day', 'night'].includes(qt)) tod = qt;
-  }
-  if (sceneOverride) {
-    if (sceneOverride.season) season = sceneOverride.season;
-    if (sceneOverride.tod) tod = sceneOverride.tod;
   }
   return { season, tod };
 }
@@ -1415,7 +1383,6 @@ function applyScene(force) {
   el.className = `sc-root sc-${state.season} sc-${state.tod}`;
   el.innerHTML = buildScene(state);
   sizeScene();
-  updateSceneButtons();
 }
 
 // 장면 높이 = 고양이 그림 바닥까지(+땅 여유)
@@ -1441,43 +1408,4 @@ function initScene() {
   window.addEventListener('resize', sizeScene);
   setInterval(() => applyScene(false), 60 * 1000);      // 06:00 / 18:00 / 계절이 바뀌는 순간 반영
   document.addEventListener('visibilitychange', () => { if (!document.hidden) applyScene(false); });
-  injectSceneDemoButtons();
 }
-
-/* ---- 시연 도구: 계절/시간 미리보기 ---- */
-function setSceneOverride(part) {
-  if (part === 'auto') sceneOverride = null;
-  else sceneOverride = Object.assign({}, sceneOverride || {}, part);
-  applyScene(true);
-}
-
-function injectSceneDemoButtons() {
-  const drawer = document.getElementById('demo-drawer');
-  if (!drawer || document.getElementById('scene-demo-row')) return;
-  const btn = 'btn-pressable px-3 py-1.5 bg-white text-on-surface font-bold rounded-xl border border-outline-variant';
-  const row = document.createElement('div');
-  row.id = 'scene-demo-row';
-  row.className = 'pt-2 border-t border-surface-container-high';
-  row.innerHTML = `
-    <p class="text-on-surface-variant mb-1.5">배경 미리보기 (계절 / 낮·밤)</p>
-    <div class="flex flex-wrap gap-2">
-      <button data-sc="season:spring" class="${btn}">🌸 봄</button>
-      <button data-sc="season:summer" class="${btn}">☀️ 여름</button>
-      <button data-sc="season:autumn" class="${btn}">🍁 가을</button>
-      <button data-sc="season:winter" class="${btn}">❄️ 겨울</button>
-      <button data-sc="tod:day" class="${btn}">🌞 낮</button>
-      <button data-sc="tod:night" class="${btn}">🌙 밤</button>
-      <button data-sc="auto" class="${btn}">🔄 지금 시각으로</button>
-    </div>`;
-  drawer.appendChild(row);
-  row.addEventListener('click', (e) => {
-    const b = e.target.closest('button[data-sc]');
-    if (!b) return;
-    const v = b.dataset.sc;
-    if (v === 'auto') return setSceneOverride('auto');
-    const [k, val] = v.split(':');
-    setSceneOverride({ [k]: val });
-  });
-}
-
-function updateSceneButtons() { /* 필요 시 선택 상태 표시용 (현재는 생략) */ }
