@@ -33,6 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderUserUI();
   lockApp();      // 로그인 확인이 끝나기 전에는 항상 잠금 상태로 시작
   initAuth();
+  initScene();
 });
 
 /* ==========================================================================
@@ -779,6 +780,7 @@ async function handleRecordSubmit(event) {
   closeRecordModal();
   renderApp();
   triggerParticles('❤️');
+  showCatToast(newRecord.type, newRecord);
 
   // 2. Sync to Supabase Cloud
   if (supabaseClient) {
@@ -857,6 +859,165 @@ async function logoutGoogle() {
 // Backward compatibility aliases
 function openKakaoLoginModal() { openGoogleLoginModal(); }
 function closeKakaoLoginModal() { closeGoogleLoginModal(); }
+
+/* ==========================================================================
+   5-1. Cat Toast (기록 등록 후 고양이가 반응하는 안내)
+   ========================================================================== */
+
+let catToastTimer = null;
+
+function ensureCatToastStyle() {
+  if (document.getElementById('cat-toast-style')) return;
+  const style = document.createElement('style');
+  style.id = 'cat-toast-style';
+  style.textContent = `
+    .ct-toast{
+      position:fixed; left:50%; bottom:104px; z-index:60;
+      width:min(330px, calc(100vw - 32px));
+      display:flex; align-items:center; gap:12px;
+      padding:10px 18px 10px 10px;
+      background:var(--color-surface,#fcfaed);
+      border:3px dashed var(--color-outline-variant,#c3c9b7);
+      border-bottom:5px solid var(--color-outline-variant,#c3c9b7);
+      border-radius:28px;
+      box-shadow:0 10px 24px rgba(93,64,55,.18);
+      transform:translate(-50%, 24px) scale(.92); opacity:0;
+      transition:transform .35s cubic-bezier(.34,1.56,.64,1), opacity .25s ease;
+      cursor:pointer; user-select:none;
+    }
+    .ct-toast.ct-show{ transform:translate(-50%, 0) scale(1); opacity:1; }
+    .ct-toast.ct-hide{ transform:translate(-50%, 16px) scale(.96); opacity:0; }
+    .ct-icon{
+      flex:0 0 72px; width:72px; height:72px; border-radius:50%;
+      background:#E3EFD2;
+      overflow:hidden; display:flex; align-items:flex-end; justify-content:center;
+    }
+    .ct-icon svg{ width:72px; height:72px; display:block; }
+    .ct-title{
+      font-family:'Plus Jakarta Sans',sans-serif; font-weight:800; font-size:17px; line-height:1.3;
+      color:var(--color-primary,#416916);
+    }
+    .ct-sub{ margin-top:2px; font-size:12px; line-height:1.4; color:var(--color-on-surface-variant,#43493b); }
+
+    .ct-wave{ transform-box:fill-box; transform-origin:50% 100%; animation:ct-wave .7s ease-in-out .25s 3; }
+    @keyframes ct-wave{ 0%,100%{ transform:rotate(0deg) } 25%{ transform:rotate(-16deg) } 75%{ transform:rotate(16deg) } }
+    .ct-peek{ animation:ct-peek .45s cubic-bezier(.34,1.56,.64,1) both; }
+    @keyframes ct-peek{ from{ transform:translateY(34px) } to{ transform:translateY(0) } }
+    .ct-pupil{ animation:ct-look 1.6s ease-in-out .5s infinite; }
+    @keyframes ct-look{ 0%,100%{ transform:translateX(0) } 30%{ transform:translateX(-3.5px) } 70%{ transform:translateX(3.5px) } }
+
+    @media (prefers-reduced-motion: reduce){
+      .ct-toast{ transition:opacity .2s ease; transform:translate(-50%,0); }
+      .ct-toast.ct-hide{ transform:translate(-50%,0); }
+      .ct-wave,.ct-peek,.ct-pupil{ animation:none; }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+// 치즈 색: 흰 털(#FFFEF8) + 연한 황갈색 무늬(#E2C9A0), 분홍 귀·코·발바닥, 초록 눈
+// 급식: 인사하는 치즈의 앞발
+const CAT_PAW_SVG = `
+<svg viewBox="0 0 80 80" aria-hidden="true">
+  <g class="ct-wave" stroke="#D9C7AE" stroke-width="1.8" stroke-linejoin="round">
+    <rect x="26" y="40" width="28" height="48" rx="14" fill="#FFFEF8"/>
+    <path d="M26.5 62h9M26.5 72h6M53.5 62h-9M53.5 72h-6" stroke="#E2C9A0" stroke-width="3.2" stroke-linecap="round"/>
+    <ellipse cx="40" cy="36" rx="23" ry="22" fill="#FFFEF8"/>
+    <path d="M32 21 Q40 17 48 21" stroke="#E2C9A0" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <path d="M33 30 Q40 27 47 30" stroke="#EADFCB" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+    <g stroke="none">
+      <ellipse cx="40" cy="43" rx="9.5" ry="8" fill="#F4A9A4"/>
+      <circle cx="25.5" cy="31" r="4.6" fill="#F4A9A4"/>
+      <circle cx="34.5" cy="20.5" r="4.6" fill="#F4A9A4"/>
+      <circle cx="45.5" cy="20.5" r="4.6" fill="#F4A9A4"/>
+      <circle cx="54.5" cy="31" r="4.6" fill="#F4A9A4"/>
+    </g>
+  </g>
+</svg>`;
+
+// 목격: 빼꼼 쳐다보는 치즈의 얼굴
+const CAT_PEEK_SVG = `
+<svg viewBox="0 0 80 80" aria-hidden="true">
+  <g class="ct-peek" stroke-linejoin="round">
+  <g transform="translate(5.6 9) scale(0.86)">
+    <path d="M10 33 L10 8 L34 20 Z" fill="#FFFEF8" stroke="#D9C7AE" stroke-width="1.8"/>
+    <path d="M70 33 L70 8 L46 20 Z" fill="#FFFEF8" stroke="#D9C7AE" stroke-width="1.8"/>
+    <path d="M15 27 L15 15 L27 21 Z" fill="#F4A9A4"/>
+    <path d="M65 27 L65 15 L53 21 Z" fill="#F4A9A4"/>
+    <path d="M5 92 L5 47 Q5 17 40 17 Q75 17 75 47 L75 92 Z" fill="#FFFEF8" stroke="#D9C7AE" stroke-width="1.8"/>
+    <g stroke="#E2C9A0" stroke-width="3" stroke-linecap="round" fill="none">
+      <path d="M35.5 21.5 L35.5 28"/><path d="M40 20.5 L40 29"/><path d="M44.5 21.5 L44.5 28"/>
+    </g>
+    <ellipse cx="26" cy="35" rx="4.5" ry="1.7" fill="#E2C9A0"/>
+    <ellipse cx="54" cy="35" rx="4.5" ry="1.7" fill="#E2C9A0"/>
+    <ellipse cx="14" cy="56" rx="5.5" ry="3.6" fill="#F8C9C4" opacity=".75"/>
+    <ellipse cx="66" cy="56" rx="5.5" ry="3.6" fill="#F8C9C4" opacity=".75"/>
+    <ellipse cx="26" cy="47" rx="9.6" ry="10.6" fill="#7DBA5A"/>
+    <ellipse cx="54" cy="47" rx="9.6" ry="10.6" fill="#7DBA5A"/>
+    <path d="M16.6 44 Q26 33 35.4 44" fill="none" stroke="#4A3324" stroke-width="2" stroke-linecap="round"/>
+    <path d="M44.6 44 Q54 33 63.4 44" fill="none" stroke="#4A3324" stroke-width="2" stroke-linecap="round"/>
+    <g class="ct-pupil">
+      <ellipse cx="26" cy="48" rx="5" ry="7.6" fill="#1F2A14"/>
+      <ellipse cx="54" cy="48" rx="5" ry="7.6" fill="#1F2A14"/>
+      <circle cx="23.6" cy="44.4" r="2.5" fill="#fff"/>
+      <circle cx="51.6" cy="44.4" r="2.5" fill="#fff"/>
+      <circle cx="28.4" cy="51.6" r="1.2" fill="#fff"/>
+      <circle cx="56.4" cy="51.6" r="1.2" fill="#fff"/>
+    </g>
+    <path d="M37 59.5 L43 59.5 L40 63 Z" fill="#F0A3A3"/>
+    <path d="M40 63 L40 65 M40 65 Q37 68.4 33.6 66 M40 65 Q43 68.4 46.4 66" fill="none" stroke="#B7857A" stroke-width="1.4" stroke-linecap="round"/>
+    <g stroke="#DCCFBB" stroke-width="1.1" stroke-linecap="round">
+      <path d="M12 61 L3 59.5"/><path d="M12 64 L3 65.5"/><path d="M68 61 L77 59.5"/><path d="M68 64 L77 65.5"/>
+    </g>
+  </g>
+  </g>
+</svg>`;
+
+function showCatToast(type, record) {
+  ensureCatToastStyle();
+
+  let title, sub, icon;
+  if (type === 'feeding') {
+    title = '잘 먹겠습니다냥!';
+    sub = '밥 챙겨줘서 고마워요 🐾';
+    icon = CAT_PAW_SVG;
+  } else {
+    title = '나를 지켜보고있냥!';
+    const status = record && record.sightingStatus;
+    sub = (status && status !== '건강해 보여요')
+      ? '걱정되면 메모와 사진을 남겨주세요'
+      : '치즈를 봐줘서 고마워요 👀';
+    icon = CAT_PEEK_SVG;
+  }
+
+  const old = document.getElementById('cat-toast');
+  if (old) old.remove();
+  clearTimeout(catToastTimer);
+
+  const el = document.createElement('div');
+  el.id = 'cat-toast';
+  el.className = 'ct-toast';
+  el.setAttribute('role', 'status');
+  el.setAttribute('aria-live', 'polite');
+  el.innerHTML = `
+    <div class="ct-icon">${icon}</div>
+    <div>
+      <div class="ct-title">${title}</div>
+      <div class="ct-sub">${sub}</div>
+    </div>`;
+  document.body.appendChild(el);
+
+  const dismiss = () => {
+    clearTimeout(catToastTimer);
+    el.classList.add('ct-hide');
+    el.classList.remove('ct-show');
+    setTimeout(() => el.remove(), 350);
+  };
+  el.addEventListener('click', dismiss);
+
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('ct-show')));
+  catToastTimer = setTimeout(dismiss, 2800);
+}
 
 /* ==========================================================================
    6. Interactive Cat Click Particles & Photo Zoom
@@ -991,3 +1152,332 @@ function escapeHTML(str) {
     tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
   );
 }
+
+/* ==========================================================================
+   9. Scene Background (계절 × 낮/밤)
+   - 계절: 봄 3~5월, 여름 6~8월, 가을 9~11월, 겨울 12~2월
+   - 낮: 06:00~17:59, 밤: 18:00~05:59 (기기의 현재 시각 기준)
+   ========================================================================== */
+
+let sceneOverride = null;   // 시연 도구에서 고른 값 { season?, tod? } (새로고침하면 자동으로 돌아옴)
+let sceneKey = '';
+let sceneObserver = null;
+
+function getSceneState() {
+  const now = new Date();
+  const m = now.getMonth() + 1;
+  const h = now.getHours();
+  let season = (m >= 3 && m <= 5) ? 'spring' : (m >= 6 && m <= 8) ? 'summer' : (m >= 9 && m <= 11) ? 'autumn' : 'winter';
+  let tod = (h >= 6 && h < 18) ? 'day' : 'night';
+  const params = new URLSearchParams(location.search);
+  const q = params.get('scene');            // 예: ?scene=winter-night
+  if (q) {
+    const [qs, qt] = q.split('-');
+    if (['spring', 'summer', 'autumn', 'winter'].includes(qs)) season = qs;
+    if (['day', 'night'].includes(qt)) tod = qt;
+  }
+  if (sceneOverride) {
+    if (sceneOverride.season) season = sceneOverride.season;
+    if (sceneOverride.tod) tod = sceneOverride.tod;
+  }
+  return { season, tod };
+}
+
+function sceneRand(seedStr) {
+  let h = 1779033703 ^ seedStr.length;
+  for (let i = 0; i < seedStr.length; i++) { h = Math.imul(h ^ seedStr.charCodeAt(i), 3432918353); h = (h << 13) | (h >>> 19); }
+  let a = h >>> 0;
+  return function () {                       // mulberry32
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function ensureSceneStyle() {
+  if (document.getElementById('scene-style')) return;
+  const st = document.createElement('style');
+  st.id = 'scene-style';
+  st.textContent = `
+    #cat-stage{ isolation:isolate; }
+    #cat-stage .grid{ margin-top:30px; }
+    .sc-root{
+      position:absolute; left:0; right:0; top:0; z-index:-1;
+      height:var(--scene-h, 300px);
+      border-radius:32px; overflow:hidden;
+      border:3px dashed var(--color-outline-variant,#c3c9b7);
+      background:linear-gradient(180deg, var(--sky-top) 0%, var(--sky-bottom) 100%);
+      pointer-events:none;
+      --h:var(--scene-h, 300px);
+    }
+    .sc-spring.sc-day   { --sky-top:#BDE7F5; --sky-bottom:#F8F6E2; --g1:#BFE07F; --g2:#A2CD63; --sun:#FFD45E; }
+    .sc-spring.sc-night { --sky-top:#1F2B55; --sky-bottom:#51619A; --g1:#46634F; --g2:#375640; }
+    .sc-summer.sc-day   { --sky-top:#7CCDF1; --sky-bottom:#DCF3FA; --g1:#82C150; --g2:#62A83C; --sun:#FFC93C; }
+    .sc-summer.sc-night { --sky-top:#14234A; --sky-bottom:#3B4F88; --g1:#2F5638; --g2:#25472D; }
+    .sc-autumn.sc-day   { --sky-top:#F8D6A6; --sky-bottom:#FFF2DE; --g1:#DDB85C; --g2:#C79F42; --sun:#FFB86B; }
+    .sc-autumn.sc-night { --sky-top:#2B2450; --sky-bottom:#6C5C88; --g1:#5C4B34; --g2:#483A2A; }
+    .sc-winter.sc-day   { --sky-top:#BAD5E8; --sky-bottom:#EEF5FA; --g1:#F6F9FC; --g2:#E0EBF4; --sun:#FFF1B8; }
+    .sc-winter.sc-night { --sky-top:#1B2748; --sky-bottom:#586D9E; --g1:#92A6C8; --g2:#7A91B8; }
+
+    .sc-celestial{ position:absolute; top:12px; right:12px; width:52px; height:52px; filter:drop-shadow(0 0 10px rgba(255,236,160,.75)); }
+    .sc-night .sc-celestial{ filter:drop-shadow(0 0 12px rgba(255,244,200,.6)); }
+    .sc-rays{ transform-origin:26px 26px; animation:sc-spin 80s linear infinite; }
+    @keyframes sc-spin{ to{ transform:rotate(360deg); } }
+
+    .sc-cloud{
+      position:absolute; top:var(--y); left:-100px; width:64px; height:20px; border-radius:20px;
+      background:#fff; opacity:.92;
+      animation:sc-drift var(--d) linear var(--delay) infinite;
+    }
+    .sc-cloud::before,.sc-cloud::after{ content:''; position:absolute; background:#fff; border-radius:50%; }
+    .sc-cloud::before{ width:30px; height:30px; top:-15px; left:9px; }
+    .sc-cloud::after{ width:22px; height:22px; top:-9px; left:32px; }
+    .sc-autumn .sc-cloud{ background:#FFF7EA; } .sc-autumn .sc-cloud::before,.sc-autumn .sc-cloud::after{ background:#FFF7EA; }
+    .sc-night .sc-cloud{ display:none; }
+    @keyframes sc-drift{ from{ transform:translateX(0); } to{ transform:translateX(calc(var(--w, 400px) + 200px)); } }
+
+    .sc-star{
+      position:absolute; left:var(--x); top:var(--y); width:var(--s); height:var(--s); border-radius:50%;
+      background:#fff; animation:sc-twinkle var(--d) ease-in-out var(--delay) infinite;
+    }
+    @keyframes sc-twinkle{ 0%,100%{ opacity:.25; transform:scale(.8); } 50%{ opacity:1; transform:scale(1.15); } }
+
+    .sc-p{
+      position:absolute; top:-24px; left:var(--x); width:var(--s); height:var(--s);
+      animation:sc-fall var(--d) linear var(--delay) infinite; will-change:transform;
+    }
+    .sc-p svg{ width:100%; height:100%; display:block; }
+    .sc-snow{ border-radius:50%; background:#fff; box-shadow:0 0 4px rgba(255,255,255,.9); }
+    .sc-night .sc-p{ filter:brightness(.82); }
+    @keyframes sc-fall{
+      0%   { transform:translate3d(0,0,0) rotate(0deg); opacity:0; }
+      8%   { opacity:1; }
+      33%  { transform:translate3d(calc(var(--dx) * .6 + 14px), calc(var(--h) * .33), 0) rotate(calc(var(--rot) * .33)); }
+      66%  { transform:translate3d(calc(var(--dx) * .9 - 14px), calc(var(--h) * .66), 0) rotate(calc(var(--rot) * .66)); }
+      100% { transform:translate3d(var(--dx), calc(var(--h) - 20px), 0) rotate(var(--rot)); opacity:.9; }
+    }
+
+    .sc-fly{
+      position:absolute; left:var(--x); top:var(--y); width:6px; height:6px; border-radius:50%;
+      background:#F7F58A; box-shadow:0 0 8px 3px rgba(247,245,138,.75);
+      animation:sc-fly var(--d) ease-in-out var(--delay) infinite, sc-blink 2.6s ease-in-out var(--delay) infinite;
+    }
+    @keyframes sc-fly{ 0%,100%{ transform:translate(0,0); } 25%{ transform:translate(12px,-8px); } 50%{ transform:translate(-8px,-16px); } 75%{ transform:translate(-14px,-4px); } }
+    @keyframes sc-blink{ 0%,100%{ opacity:.2; } 50%{ opacity:1; } }
+
+    .sc-ground{ position:absolute; left:0; bottom:0; width:100%; height:84px; display:block; }
+    .sc-prop{ position:absolute; bottom:12px; display:block; }
+    .sc-prop-l{ left:8px; } .sc-prop-r{ right:8px; }
+    .sc-night .sc-prop{ filter:brightness(.66) saturate(.85); }
+
+    @media (prefers-reduced-motion: reduce){
+      .sc-root *{ animation:none !important; }
+      .sc-p{ display:none; }
+      .sc-cloud{ left:18%; }
+    }
+  `;
+  document.head.appendChild(st);
+}
+
+/* ---- 그림 조각들 ---- */
+function scSunSVG(tod, season) {
+  if (tod === 'night') {
+    if (season === 'autumn') {   // 보름달
+      return `<svg viewBox="0 0 56 56"><circle cx="28" cy="28" r="20" fill="#FFD9A0"/><ellipse cx="21" cy="22" rx="5" ry="4" fill="#F5C78E"/><ellipse cx="34" cy="33" rx="6" ry="4.5" fill="#F5C78E"/><circle cx="31" cy="19" r="2.5" fill="#F5C78E"/></svg>`;
+    }
+    return `<svg viewBox="0 0 56 56"><defs><mask id="scm"><rect width="56" height="56" fill="#fff"/><circle cx="38" cy="22" r="15" fill="#000"/></mask></defs><circle cx="26" cy="30" r="19" fill="#FFF3C4" mask="url(#scm)"/></svg>`;
+  }
+  const rays = season === 'winter' ? '' : Array.from({ length: 8 }, (_, i) =>
+    `<line x1="26" y1="3" x2="26" y2="9" stroke="var(--sun)" stroke-width="3" stroke-linecap="round" transform="rotate(${i * 45} 26 26)"/>`).join('');
+  return `<svg viewBox="0 0 52 52"><g class="sc-rays">${rays}</g><circle cx="26" cy="26" r="${season === 'winter' ? 11 : 13}" fill="var(--sun)"/></svg>`;
+}
+
+function scGroundSVG() {
+  return `<svg class="sc-ground" viewBox="0 0 400 84" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M0 34 Q70 6 150 26 T320 20 T400 30 L400 84 L0 84 Z" fill="var(--g2)"/>
+    <path d="M0 52 Q100 30 200 46 T400 40 L400 84 L0 84 Z" fill="var(--g1)"/>
+  </svg>`;
+}
+
+function scSunflower(h) {
+  const petals = Array.from({ length: 12 }, (_, i) =>
+    `<ellipse cx="22" cy="9" rx="3.6" ry="7" fill="#FFC93C" transform="rotate(${i * 30} 22 20)"/>`).join('');
+  return `<svg class="sc-prop" width="44" height="${h}" viewBox="0 0 44 ${h}" aria-hidden="true">
+    <path d="M22 ${h} L22 22" stroke="#5E9E3A" stroke-width="4" stroke-linecap="round"/>
+    <path d="M22 ${h - 16} Q8 ${h - 24} 6 ${h - 38} Q20 ${h - 36} 22 ${h - 16}Z" fill="#6DB043"/>
+    <path d="M22 ${h - 26} Q36 ${h - 32} 38 ${h - 44} Q24 ${h - 44} 22 ${h - 26}Z" fill="#79BC4D"/>
+    ${petals}<circle cx="22" cy="20" r="7" fill="#8B5A2B"/><circle cx="20" cy="18" r="1.6" fill="#A8743A"/><circle cx="24" cy="22" r="1.6" fill="#A8743A"/>
+  </svg>`;
+}
+
+function scPropsHTML(season) {
+  const L = (svg) => svg.replace('class="sc-prop"', 'class="sc-prop sc-prop-l"');
+  const R = (svg) => svg.replace('class="sc-prop"', 'class="sc-prop sc-prop-r"');
+  if (season === 'spring') {
+    const tree = `<svg class="sc-prop" width="66" height="82" viewBox="0 0 66 82" aria-hidden="true">
+      <path d="M32 82 L32 48 M32 58 Q40 52 44 46 M32 52 Q25 47 21 42" stroke="#8B5E3C" stroke-width="5" fill="none" stroke-linecap="round"/>
+      <circle cx="33" cy="27" r="21" fill="#F9C6D4"/><circle cx="17" cy="37" r="13" fill="#F5AEC3"/><circle cx="50" cy="35" r="14" fill="#F5AEC3"/><circle cx="31" cy="20" r="11" fill="#FCDDE6"/>
+      <circle cx="22" cy="29" r="2.2" fill="#fff" opacity=".85"/><circle cx="42" cy="22" r="2" fill="#fff" opacity=".85"/><circle cx="38" cy="38" r="2" fill="#fff" opacity=".8"/>
+    </svg>`;
+    const daisy = (x, y, c) => `<g transform="translate(${x} ${y})"><path d="M0 0 L0 22" stroke="#6DB043" stroke-width="2.4" stroke-linecap="round"/>${[0, 72, 144, 216, 288].map(a => `<circle cx="0" cy="-5" r="3.6" fill="${c}" transform="rotate(${a})"/>`).join('')}<circle r="3" fill="#FFD166"/></g>`;
+    const flowers = `<svg class="sc-prop" width="62" height="40" viewBox="0 0 62 40" aria-hidden="true">${daisy(12, 10, '#fff')}${daisy(30, 14, '#FFD6E2')}${daisy(48, 9, '#fff')}</svg>`;
+    return L(flowers) + R(tree);
+  }
+  if (season === 'summer') {
+    return L(scSunflower(74)) + R(scSunflower(58));
+  }
+  if (season === 'autumn') {
+    const tree = `<svg class="sc-prop" width="66" height="82" viewBox="0 0 66 82" aria-hidden="true">
+      <path d="M33 82 L33 46 M33 60 Q42 54 46 48 M33 54 Q25 48 21 43" stroke="#7A5232" stroke-width="5" fill="none" stroke-linecap="round"/>
+      <circle cx="33" cy="26" r="21" fill="#F29A3A"/><circle cx="17" cy="36" r="13" fill="#E8742F"/><circle cx="50" cy="35" r="14" fill="#F6C142"/><circle cx="31" cy="19" r="10" fill="#F7B04C"/>
+    </svg>`;
+    const pumpkin = `<svg class="sc-prop" width="46" height="38" viewBox="0 0 46 38" aria-hidden="true">
+      <ellipse cx="15" cy="23" rx="12" ry="12" fill="#EE8A2B"/><ellipse cx="31" cy="23" rx="12" ry="12" fill="#EE8A2B"/><ellipse cx="23" cy="23" rx="10" ry="13" fill="#F6A03F"/>
+      <path d="M23 11 Q22 5 26 2" stroke="#5E8E3A" stroke-width="3.2" fill="none" stroke-linecap="round"/><path d="M23 12 Q16 9 15 14 Q20 15 23 12Z" fill="#6DB043"/>
+    </svg>`;
+    return L(tree) + R(pumpkin);
+  }
+  // winter
+  const fir = `<svg class="sc-prop" width="58" height="82" viewBox="0 0 58 82" aria-hidden="true">
+    <rect x="26" y="66" width="7" height="16" fill="#7A5232"/>
+    <path d="M29 4 L48 34 L10 34 Z" fill="#3F8F5B"/><path d="M29 22 L52 56 L6 56 Z" fill="#3F8F5B"/><path d="M29 40 L56 72 L2 72 Z" fill="#357C4D"/>
+    <path d="M29 4 L36 15 Q29 18 22 15 Z" fill="#fff"/><path d="M29 22 L38 35 Q29 39 20 35 Z" fill="#fff"/><path d="M29 40 L41 55 Q29 60 17 55 Z" fill="#fff"/>
+  </svg>`;
+  const snowman = `<svg class="sc-prop" width="44" height="64" viewBox="0 0 44 64" aria-hidden="true">
+    <circle cx="22" cy="46" r="15" fill="#fff" stroke="#D5E3EF" stroke-width="1.5"/><circle cx="22" cy="23" r="11" fill="#fff" stroke="#D5E3EF" stroke-width="1.5"/>
+    <circle cx="18.5" cy="21" r="1.5" fill="#2B2B2B"/><circle cx="25.5" cy="21" r="1.5" fill="#2B2B2B"/><path d="M22 24 L30 26 L22 27Z" fill="#F29A3A"/>
+    <circle cx="22" cy="42" r="1.4" fill="#2B2B2B"/><circle cx="22" cy="48" r="1.4" fill="#2B2B2B"/>
+    <path d="M12 15 L32 15 L29 4 L15 4Z" fill="#D64B5C"/><rect x="11" y="14" width="22" height="3.5" rx="1.7" fill="#B53A4A"/>
+    <path d="M10 33 Q22 38 34 33" stroke="#5FA4D8" stroke-width="4" fill="none" stroke-linecap="round"/>
+  </svg>`;
+  return L(snowman) + R(fir);
+}
+
+function buildScene(state) {
+  const { season, tod } = state;
+  const rnd = sceneRand(season + '-' + tod);
+  const r = (a, b) => a + rnd() * (b - a);
+  let html = '';
+
+  // 하늘: 해/달, 구름, 별
+  html += `<div class="sc-celestial">${scSunSVG(tod, season)}</div>`;
+  if (tod === 'day') {
+    for (let i = 0; i < 3; i++) {
+      html += `<div class="sc-cloud" style="--y:${Math.round(r(14, 70))}px; --d:${Math.round(r(70, 110))}s; --delay:-${Math.round(r(0, 90))}s; transform:scale(${r(.8, 1.2).toFixed(2)})"></div>`;
+    }
+  } else {
+    for (let i = 0; i < 22; i++) {
+      const s = r(1.5, 3.2).toFixed(1);
+      html += `<div class="sc-star" style="--x:${r(3, 80).toFixed(1)}%; --y:${Math.round(r(8, 120))}px; --s:${s}px; --d:${r(2.2, 4.6).toFixed(1)}s; --delay:-${r(0, 4).toFixed(1)}s"></div>`;
+    }
+  }
+
+  // 떨어지는 것들 / 반딧불
+  const petal = (c) => `<svg viewBox="0 0 10 12"><path d="M5 0 C9 3 9 9 5 12 C1 9 1 3 5 0Z" fill="${c}"/></svg>`;
+  const leaf = (c) => `<svg viewBox="0 0 12 12"><path d="M6 0 L7.5 3.5 L11 3 L8.5 6 L10 9.5 L6.5 8.5 L6 12 L5.5 8.5 L2 9.5 L3.5 6 L1 3 L4.5 3.5Z" fill="${c}"/></svg>`;
+  const fall = (inner, cls, n, sMin, sMax) => {
+    for (let i = 0; i < n; i++) {
+      const s = r(sMin, sMax).toFixed(1);
+      html += `<div class="sc-p ${cls}" style="--x:${r(0, 96).toFixed(1)}%; --s:${s}px; --d:${r(9, 16).toFixed(1)}s; --delay:-${r(0, 16).toFixed(1)}s; --dx:${Math.round(r(-40, 40))}px; --rot:${Math.round(r(-260, 260))}deg">${typeof inner === 'function' ? inner() : inner}</div>`;
+    }
+  };
+  if (season === 'spring') { const cs = ['#F7A3BD', '#F9BFD0', '#F08CAB']; fall(() => petal(cs[Math.floor(rnd() * cs.length)]), '', 14, 10, 15); }
+  if (season === 'autumn') { const cs = ['#E8742F', '#F29A3A', '#D64B2B', '#F6C142']; fall(() => leaf(cs[Math.floor(rnd() * cs.length)]), '', 12, 14, 20); }
+  if (season === 'winter') { fall('', 'sc-snow', 26, 3, 6); }
+  if (season === 'summer' && tod === 'night') {
+    for (let i = 0; i < 12; i++) {
+      html += `<div class="sc-fly" style="--x:${r(4, 92).toFixed(1)}%; --y:${Math.round(r(90, 230))}px; --d:${r(5, 9).toFixed(1)}s; --delay:-${r(0, 8).toFixed(1)}s"></div>`;
+    }
+  }
+
+  // 땅 + 소품
+  html += scGroundSVG() + scPropsHTML(season);
+  return html;
+}
+
+function applyScene(force) {
+  const stage = document.getElementById('cat-stage');
+  if (!stage) return;
+  const state = getSceneState();
+  const key = state.season + '-' + state.tod;
+  if (!force && key === sceneKey && document.getElementById('scene-bg')) return;
+  sceneKey = key;
+
+  ensureSceneStyle();
+  let el = document.getElementById('scene-bg');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'scene-bg';
+    el.setAttribute('aria-hidden', 'true');
+    stage.insertBefore(el, stage.firstChild);
+  }
+  el.className = `sc-root sc-${state.season} sc-${state.tod}`;
+  el.innerHTML = buildScene(state);
+  sizeScene();
+  updateSceneButtons();
+}
+
+// 장면 높이 = 고양이 그림 바닥까지(+땅 여유)
+function sizeScene() {
+  const stage = document.getElementById('cat-stage');
+  const el = document.getElementById('scene-bg');
+  const cat = document.getElementById('cat-illustration-container');
+  if (!stage || !el || !cat || !cat.parentElement) return;
+  const holder = cat.parentElement;
+  if (!holder.offsetHeight) return;           // 로그인 전(숨김 상태)에는 측정 불가
+  const h = holder.offsetTop + holder.offsetHeight + 30;
+  el.style.setProperty('--scene-h', h + 'px');
+  el.style.setProperty('--w', stage.clientWidth + 'px');
+}
+
+function initScene() {
+  applyScene(true);
+  const stage = document.getElementById('cat-stage');
+  if (stage && 'ResizeObserver' in window) {
+    sceneObserver = new ResizeObserver(() => sizeScene());
+    sceneObserver.observe(stage);
+  }
+  window.addEventListener('resize', sizeScene);
+  setInterval(() => applyScene(false), 60 * 1000);      // 06:00 / 18:00 / 계절이 바뀌는 순간 반영
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) applyScene(false); });
+  injectSceneDemoButtons();
+}
+
+/* ---- 시연 도구: 계절/시간 미리보기 ---- */
+function setSceneOverride(part) {
+  if (part === 'auto') sceneOverride = null;
+  else sceneOverride = Object.assign({}, sceneOverride || {}, part);
+  applyScene(true);
+}
+
+function injectSceneDemoButtons() {
+  const drawer = document.getElementById('demo-drawer');
+  if (!drawer || document.getElementById('scene-demo-row')) return;
+  const btn = 'btn-pressable px-3 py-1.5 bg-white text-on-surface font-bold rounded-xl border border-outline-variant';
+  const row = document.createElement('div');
+  row.id = 'scene-demo-row';
+  row.className = 'pt-2 border-t border-surface-container-high';
+  row.innerHTML = `
+    <p class="text-on-surface-variant mb-1.5">배경 미리보기 (계절 / 낮·밤)</p>
+    <div class="flex flex-wrap gap-2">
+      <button data-sc="season:spring" class="${btn}">🌸 봄</button>
+      <button data-sc="season:summer" class="${btn}">☀️ 여름</button>
+      <button data-sc="season:autumn" class="${btn}">🍁 가을</button>
+      <button data-sc="season:winter" class="${btn}">❄️ 겨울</button>
+      <button data-sc="tod:day" class="${btn}">🌞 낮</button>
+      <button data-sc="tod:night" class="${btn}">🌙 밤</button>
+      <button data-sc="auto" class="${btn}">🔄 지금 시각으로</button>
+    </div>`;
+  drawer.appendChild(row);
+  row.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-sc]');
+    if (!b) return;
+    const v = b.dataset.sc;
+    if (v === 'auto') return setSceneOverride('auto');
+    const [k, val] = v.split(':');
+    setSceneOverride({ [k]: val });
+  });
+}
+
+function updateSceneButtons() { /* 필요 시 선택 상태 표시용 (현재는 생략) */ }
