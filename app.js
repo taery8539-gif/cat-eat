@@ -255,7 +255,23 @@ function updateSyncBadge(status) {
   } else {
     badge.className = 'inline-flex items-center px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-300 shadow-xs';
     badge.textContent = '💾 로컬 저장';
+    badge.title = lastSyncError || '';
   }
+  badge.style.cursor = 'pointer';
+}
+
+function initSyncBadgeTap() {
+  const badge = document.getElementById('cloud-sync-badge');
+  if (!badge || badge.dataset.bound) return;
+  badge.dataset.bound = '1';
+  badge.addEventListener('click', () => {
+    if (badge.textContent.includes('로컬')) {
+      alert('서버와 연결하지 못했어요.\n\n원인: ' + (lastSyncError || '알 수 없음') + '\n\n확인을 누르면 다시 시도해요.');
+      fetchCloudRecords();
+    } else if (badge.textContent.includes('실시간')) {
+      fetchCloudRecords();       // 눌러서 수동 새로고침
+    }
+  });
 }
 
 function dbRowToRecord(row) {
@@ -289,32 +305,68 @@ function recordToDbRow(rec) {
   };
 }
 
-async function fetchCloudRecords() {
+let lastSyncError = '';
+let syncRetryTimer = null;
+const RECORD_LIST_COLUMNS = 'id,type,author,time,food_type,cat_seen,sighting_status,memo,created_at';  // 사진(photo)은 용량이 커서 제외
+
+async function fetchCloudRecords(attempt = 0) {
   if (!supabaseClient) return;
+  clearTimeout(syncRetryTimer);
   try {
     updateSyncBadge('loading');
     const { data, error } = await supabaseClient
       .from('records')
-      .select('*')
+      .select(RECORD_LIST_COLUMNS)
       .order('time', { ascending: false });
 
-    if (error) {
-      console.warn('Supabase fetch error (테이블 생성 확인 필요):', error.message);
-      updateSyncBadge('local');
-      return;
-    }
+    if (error) throw new Error(error.message || String(error));
 
+    lastSyncError = '';
     if (data && data.length > 0) {
+      const oldPhotos = {};
+      records.forEach(r => { if (r.photo) oldPhotos[String(r.id)] = r.photo; });
       records = data.map(dbRowToRecord);
+      records.forEach(r => {                              // 이미 받아둔 사진은 그대로 유지
+        const cached = oldPhotos[String(r.id)] || localStorage.getItem(STORAGE_KEY_RECORDS + '_photo_' + r.id);
+        if (cached) r.photo = cached;
+      });
       saveLocalCache();
       renderApp();
-      updateSyncBadge('connected');
+    }
+    updateSyncBadge('connected');
+    loadMissingPhotos();                                  // 사진은 뒤에서 하나씩
+  } catch (err) {
+    lastSyncError = (err && err.message) ? err.message : String(err);
+    console.warn(`Supabase fetch failed (시도 ${attempt + 1}):`, lastSyncError);
+    if (attempt < 2) {
+      syncRetryTimer = setTimeout(() => fetchCloudRecords(attempt + 1), 1500 * (attempt + 1));
     } else {
-      updateSyncBadge('connected');
+      updateSyncBadge('local');
+    }
+  }
+}
+
+// 사진이 있는 기록만 골라서, 사진을 한 장씩 내려받는다 (한 번에 크게 받다가 실패하는 것을 방지)
+let photoLoadRunning = false;
+async function loadMissingPhotos() {
+  if (!supabaseClient || photoLoadRunning) return;
+  photoLoadRunning = true;
+  try {
+    const { data: idRows, error } = await supabaseClient.from('records').select('id').not('photo', 'is', null);
+    if (error || !idRows) return;
+    for (const row of idRows) {
+      const rec = records.find(r => String(r.id) === String(row.id));
+      if (!rec || rec.photo) continue;
+      const { data, error: e2 } = await supabaseClient.from('records').select('photo').eq('id', String(row.id)).maybeSingle();
+      if (e2 || !data || !data.photo) continue;
+      rec.photo = data.photo;
+      try { localStorage.setItem(STORAGE_KEY_RECORDS + '_photo_' + rec.id, data.photo); } catch (e) { /* 용량 초과는 무시 */ }
+      renderApp();
     }
   } catch (err) {
-    console.error('Supabase fetch failed:', err);
-    updateSyncBadge('local');
+    console.warn('Photo load warning:', err);
+  } finally {
+    photoLoadRunning = false;
   }
 }
 
@@ -386,8 +438,6 @@ function saveLocalCache() {
           localStorage.setItem(photoKey, r.photo);
         } catch (e2) {}
       }
-    } else {
-      localStorage.removeItem(photoKey);
     }
   });
 }
@@ -717,17 +767,45 @@ function switchRecordTab(tab) {
   }
 }
 
-function handlePhotoSelect(event) {
+function shrinkImage(file, maxSide, quality) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+        const w = Math.max(1, Math.round(img.naturalWidth * scale));
+        const h = Math.max(1, Math.round(img.naturalHeight * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      } catch (e) { URL.revokeObjectURL(url); resolve(null); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  });
+}
+
+async function handlePhotoSelect(event) {
   const file = event.target.files[0];
   if (!file) return;
 
-  const reader = new FileReader();
-  reader.onload = function (e) {
-    selectedPhotoBase64 = e.target.result;
-    document.getElementById('photo-preview-img').src = selectedPhotoBase64;
-    document.getElementById('photo-preview-container').classList.remove('hidden');
-  };
-  reader.readAsDataURL(file);
+  // 폰 사진은 수 MB라서 올리기 전에 줄인다 (줄이지 못하면 원본 사용)
+  let dataUrl = await shrinkImage(file, 1024, 0.72);
+  if (!dataUrl) {
+    dataUrl = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target.result);
+      reader.readAsDataURL(file);
+    });
+  }
+  selectedPhotoBase64 = dataUrl;
+  document.getElementById('photo-preview-img').src = selectedPhotoBase64;
+  document.getElementById('photo-preview-container').classList.remove('hidden');
 }
 
 function removePhoto() {
@@ -1406,6 +1484,13 @@ function initScene() {
     sceneObserver.observe(stage);
   }
   window.addEventListener('resize', sizeScene);
-  setInterval(() => applyScene(false), 60 * 1000);      // 06:00 / 18:00 / 계절이 바뀌는 순간 반영
+  setInterval(() => applyScene(false), 60 * 1000);
+  initSyncBadgeTap();
+  const retryIfLocal = () => {
+    const b = document.getElementById('cloud-sync-badge');
+    if (activeUserId && b && b.textContent.includes('로컬')) fetchCloudRecords();
+  };
+  window.addEventListener('online', retryIfLocal);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) retryIfLocal(); });      // 06:00 / 18:00 / 계절이 바뀌는 순간 반영
   document.addEventListener('visibilitychange', () => { if (!document.hidden) applyScene(false); });
 }
