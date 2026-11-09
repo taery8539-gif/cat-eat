@@ -23,6 +23,8 @@ let currentUser = { name: '', email: '', picture: '' };
 let activeUserId = null;      // 로그인 + 허용 확인이 끝난 사용자 id
 let authMessage = '';         // 로그인 화면에 보여줄 안내/오류 문구
 let realtimeChannel = null;
+let reactionsChannel = null;
+let reactions = [];           // {record_id, user_email, user_name, kind}
 let currentFilter = 'all'; // 'all', 'feeding', 'sighting'
 let currentRecordTab = 'feeding'; // 'feeding', 'sighting'
 let selectedPhotoBase64 = null;
@@ -238,6 +240,8 @@ async function startCloudData() {
   if (supabaseClient) {
     await fetchCloudRecords();
     subscribeToRealtime();
+    fetchReactions();
+    subscribeToReactions();
   } else {
     updateSyncBadge('local');
   }
@@ -303,6 +307,150 @@ function recordToDbRow(rec) {
     photo: rec.photo || null,
     created_at: rec.createdAt || rec.time
   };
+}
+
+/* ==========================================================================
+   Reactions (좋아요 / 슬퍼요 / 웃겨요)
+   ========================================================================== */
+const REACTION_KINDS = [
+  { kind: 'like',  emoji: '😻', label: '좋아요' },
+  { kind: 'sad',   emoji: '😿', label: '슬퍼요' },
+  { kind: 'funny', emoji: '😹', label: '웃겨요' }
+];
+
+function myEmail() { return ((currentUser && currentUser.email) || '').toLowerCase(); }
+
+function reactionBarHTML(item) {
+  const me = myEmail();
+  const mine = reactions.filter(x => String(x.record_id) === String(item.id));
+  const buttons = REACTION_KINDS.map(k => {
+    const list = mine.filter(x => x.kind === k.kind);
+    const on = list.some(x => (x.user_email || '').toLowerCase() === me);
+    const names = list.map(x => x.user_name || '친구').join(', ');
+    return `<button type="button" data-rx="${item.id}|${k.kind}" onclick="toggleReaction('${item.id}','${k.kind}')"
+      title="${escapeHTML(names || k.label)}"
+      class="rx-btn ${on ? 'rx-on' : ''}"><span class="rx-emoji">${k.emoji}</span><span class="rx-label">${k.label}</span>${list.length ? `<span class="rx-count">${list.length}</span>` : ''}</button>`;
+  }).join('');
+  return `<div class="rx-bar mt-2">${buttons}</div>`;
+}
+
+function ensureReactionStyle() {
+  if (document.getElementById('rx-style')) return;
+  const st = document.createElement('style');
+  st.id = 'rx-style';
+  st.textContent = `
+    .rx-bar{display:flex;flex-wrap:wrap;gap:6px}
+    .rx-btn{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;border:1.5px solid #e7dcc4;background:#fffdf6;font-size:11px;font-weight:700;color:#7a6a4a;transition:transform .15s,background .15s,border-color .15s}
+    .rx-btn:active{transform:scale(.92)}
+    .rx-btn.rx-on{background:#fff0c9;border-color:#f2b84b;color:#8a5a00}
+    .rx-emoji{font-size:14px;line-height:1}
+    .rx-count{min-width:16px;text-align:center;background:#f2b84b;color:#fff;border-radius:999px;padding:0 5px;font-size:10px}
+    .rx-pop .rx-emoji{animation:rxpop .45s ease}
+    @keyframes rxpop{0%{transform:scale(1)}40%{transform:scale(1.6) rotate(-10deg)}100%{transform:scale(1)}}
+    .rx-toast{position:fixed;left:50%;top:14px;transform:translateX(-50%) translateY(-120%);z-index:9999;background:#fffdf6;border:2px solid #f2b84b;border-radius:999px;padding:8px 16px;font-size:12px;font-weight:700;color:#6b4a00;box-shadow:0 6px 18px rgba(0,0,0,.15);transition:transform .35s cubic-bezier(.2,1.2,.4,1);max-width:90vw}
+    .rx-toast.show{transform:translateX(-50%) translateY(0)}
+  `;
+  document.head.appendChild(st);
+}
+
+let rxToastTimer = null;
+function showReactionToast(text) {
+  ensureReactionStyle();
+  let el = document.getElementById('rx-toast');
+  if (!el) { el = document.createElement('div'); el.id = 'rx-toast'; el.className = 'rx-toast'; document.body.appendChild(el); }
+  el.textContent = text;
+  requestAnimationFrame(() => el.classList.add('show'));
+  clearTimeout(rxToastTimer);
+  rxToastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+}
+
+function updateReceivedChip() {
+  const el = document.getElementById('received-reactions');
+  if (!el) return;
+  const myName = currentUser && currentUser.name;
+  if (!myName) { el.classList.add('hidden'); return; }
+  const myIds = new Set(records.filter(r => r.author === myName).map(r => String(r.id)));
+  const me = myEmail();
+  const n = reactions.filter(x => myIds.has(String(x.record_id)) && (x.user_email || '').toLowerCase() !== me).length;
+  if (n > 0) { el.textContent = `💌 받은 반응 ${n}`; el.classList.remove('hidden'); }
+  else el.classList.add('hidden');
+}
+
+async function fetchReactions() {
+  if (!supabaseClient) return;
+  try {
+    const { data, error } = await supabaseClient.from('reactions').select('record_id,user_email,user_name,kind');
+    if (error) { console.warn('reactions fetch:', error.message); return; }
+    reactions = data || [];
+    renderApp();
+  } catch (e) { console.warn('reactions fetch failed:', e); }
+}
+
+async function toggleReaction(recordId, kind) {
+  const me = myEmail();
+  if (!me) return;
+  const idx = reactions.findIndex(x => String(x.record_id) === String(recordId) && x.kind === kind && (x.user_email || '').toLowerCase() === me);
+  const adding = idx === -1;
+  const row = { record_id: String(recordId), user_email: me, user_name: currentUser.name || '친구', kind };
+
+  // 화면 먼저 반영 (실패하면 되돌림)
+  if (adding) reactions.push(row); else reactions.splice(idx, 1);
+  renderApp();
+  if (adding) {
+    const btn = document.querySelector(`[data-rx="${recordId}|${kind}"]`);
+    if (btn) { btn.classList.add('rx-pop'); setTimeout(() => btn.classList.remove('rx-pop'), 500); }
+    if (typeof triggerParticles === 'function') { try { triggerParticles(REACTION_KINDS.find(k => k.kind === kind).emoji); } catch (e) {} }
+  }
+
+  if (!supabaseClient) return;
+  try {
+    const q = supabaseClient.from('reactions');
+    const { error } = adding
+      ? await q.insert([row])
+      : await q.delete().eq('record_id', String(recordId)).eq('user_email', me).eq('kind', kind);
+    if (error) throw new Error(error.message);
+  } catch (err) {
+    console.warn('reaction sync failed:', err);
+    if (adding) reactions = reactions.filter(x => !(String(x.record_id) === String(recordId) && x.kind === kind && (x.user_email || '').toLowerCase() === me));
+    else reactions.push(row);
+    renderApp();
+    showReactionToast('반응을 저장하지 못했어요. 잠시 후 다시 눌러주세요');
+  }
+}
+
+function subscribeToReactions() {
+  if (!supabaseClient || reactionsChannel) return;
+  try {
+    reactionsChannel = supabaseClient
+      .channel('public:reactions')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reactions' }, payload => {
+        const me = myEmail();
+        if (payload.eventType === 'INSERT') {
+          const n = payload.new;
+          const dup = reactions.some(x => String(x.record_id) === String(n.record_id) && x.kind === n.kind && (x.user_email || '').toLowerCase() === (n.user_email || '').toLowerCase());
+          if (!dup) {
+            reactions.push({ record_id: String(n.record_id), user_email: n.user_email, user_name: n.user_name, kind: n.kind });
+            // 내 기록에 다른 사람이 반응하면 알려주기
+            const rec = records.find(r => String(r.id) === String(n.record_id));
+            if ((n.user_email || '').toLowerCase() !== me && rec && currentUser.name && rec.author === currentUser.name) {
+              const k = REACTION_KINDS.find(k => k.kind === n.kind);
+              showReactionToast(`${k ? k.emoji : '💌'} ${n.user_name || '친구'}님이 내 기록에 ${k ? k.label : '반응'}를 눌렀어요!`);
+            }
+            renderApp();
+          }
+        } else if (payload.eventType === 'DELETE') {
+          const o = payload.old || {};
+          if (o.user_email) {
+            reactions = reactions.filter(x => !(String(x.record_id) === String(o.record_id) && x.kind === o.kind && (x.user_email || '').toLowerCase() === o.user_email.toLowerCase()));
+          } else {
+            fetchReactions();
+            return;
+          }
+          renderApp();
+        }
+      })
+      .subscribe();
+  } catch (err) { console.warn('reactions realtime warning:', err); }
 }
 
 let lastSyncError = '';
@@ -375,6 +523,11 @@ function stopCloudData() {
     if (realtimeChannel && supabaseClient) supabaseClient.removeChannel(realtimeChannel);
   } catch (e) { /* ignore */ }
   realtimeChannel = null;
+  try {
+    if (reactionsChannel && supabaseClient) supabaseClient.removeChannel(reactionsChannel);
+  } catch (e) { /* ignore */ }
+  reactionsChannel = null;
+  reactions = [];
   records = [];
   renderApp();
 }
@@ -636,6 +789,7 @@ function updateHistoryList(sortedRecords) {
     filtered = sortedRecords.filter(r => r.type === 'sighting');
   }
 
+  ensureReactionStyle();
   countEl.textContent = `${filtered.length}건`;
 
   if (filtered.length === 0) {
@@ -693,10 +847,12 @@ function updateHistoryList(sortedRecords) {
           <p class="text-xs text-on-surface font-medium">${contentText}</p>
           ${memoHTML}
           ${photoHTML}
+          ${reactionBarHTML(item)}
         </div>
       </div>
     `;
   }).join('');
+  updateReceivedChip();
 }
 
 /* ==========================================================================
