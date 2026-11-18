@@ -690,7 +690,18 @@ function renderApp() {
   const sorted = [...records].sort((a, b) => new Date(b.time) - new Date(a.time));
   
   const lastFeeding = sorted.find(r => r.type === 'feeding');
-  const lastSighting = sorted.find(r => r.type === 'sighting');
+  const lastSightingRecord = sorted.find(r => r.type === 'sighting');
+  // 급식하면서 "봤어요"를 고른 기록도 목격으로 인정 → 둘 중 더 최근 것을 '마지막 목격'으로 사용
+  const lastSeenViaFeeding = sorted.find(r => r.type === 'feeding' && r.catSeen);
+  let lastSighting = lastSightingRecord;
+  if (lastSeenViaFeeding && (!lastSightingRecord || new Date(lastSeenViaFeeding.time) > new Date(lastSightingRecord.time))) {
+    lastSighting = {
+      time: lastSeenViaFeeding.time,
+      author: lastSeenViaFeeding.author,
+      sightingStatus: '급식하며 만났어요',
+      viaFeeding: true
+    };
+  }
 
   updateCatStage(lastFeeding, lastSighting);
   updateBentoCards(lastFeeding, lastSighting);
@@ -769,7 +780,7 @@ function updateBentoCards(lastFeeding, lastSighting) {
     seenTimeEl.textContent = formatRelativeTime(lastSighting.time);
     seenAvatarEl.textContent = lastSighting.author ? lastSighting.author.charAt(0) : '?';
     seenDetailEl.textContent = `${lastSighting.author || '익명'} · ${lastSighting.sightingStatus}`;
-    seenStatusIconEl.textContent = getSightingEmoji(lastSighting.sightingStatus);
+    seenStatusIconEl.textContent = lastSighting.viaFeeding ? '😺' : getSightingEmoji(lastSighting.sightingStatus);
   } else {
     seenTimeEl.textContent = '기록 없음';
     seenAvatarEl.textContent = '?';
