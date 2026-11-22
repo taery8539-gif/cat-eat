@@ -24,6 +24,8 @@ let activeUserId = null;      // 로그인 + 허용 확인이 끝난 사용자 i
 let authMessage = '';         // 로그인 화면에 보여줄 안내/오류 문구
 let realtimeChannel = null;
 let reactionsChannel = null;
+const PAGE_SIZE = 10;
+let visibleCount = PAGE_SIZE;   // 화면에 보이는 기록 수 (사진은 이 범위만 내려받음)
 let reactions = [];           // {record_id, user_email, user_name, kind}
 let currentFilter = 'all'; // 'all', 'feeding', 'sighting'
 let currentRecordTab = 'feeding'; // 'feeding', 'sighting'
@@ -473,7 +475,9 @@ async function fetchCloudRecords(attempt = 0) {
     if (data && data.length > 0) {
       const oldPhotos = {};
       records.forEach(r => { if (r.photo) oldPhotos[String(r.id)] = r.photo; });
-      records = data.map(dbRowToRecord);
+      const serverIds = new Set(data.map(d => String(d.id)));
+      const keepPending = records.filter(r => r.unsynced && !serverIds.has(String(r.id)));
+      records = data.map(dbRowToRecord).concat(keepPending);
       records.forEach(r => {                              // 이미 받아둔 사진은 그대로 유지
         const cached = oldPhotos[String(r.id)] || localStorage.getItem(STORAGE_KEY_RECORDS + '_photo_' + r.id);
         if (cached) r.photo = cached;
@@ -482,6 +486,7 @@ async function fetchCloudRecords(attempt = 0) {
       renderApp();
     }
     updateSyncBadge('connected');
+    retryPendingUploads();                                // 올리지 못한 기록 재전송
     loadMissingPhotos();                                  // 사진은 뒤에서 하나씩
   } catch (err) {
     lastSyncError = (err && err.message) ? err.message : String(err);
@@ -496,25 +501,92 @@ async function fetchCloudRecords(attempt = 0) {
 
 // 사진이 있는 기록만 골라서, 사진을 한 장씩 내려받는다 (한 번에 크게 받다가 실패하는 것을 방지)
 let photoLoadRunning = false;
+let photoRetryTimer = null;
+let photoFailCount = 0;
+let photoReloadQueued = false;
 async function loadMissingPhotos() {
-  if (!supabaseClient || photoLoadRunning) return;
+  if (!supabaseClient) return;
+  if (photoLoadRunning) { photoReloadQueued = true; return; }
   photoLoadRunning = true;
+  let failed = 0;
   try {
     const { data: idRows, error } = await supabaseClient.from('records').select('id').not('photo', 'is', null);
-    if (error || !idRows) return;
+    if (error || !idRows) throw new Error(error ? error.message : 'no rows');
+
+    // 사진이 있는 기록 표시 → 아직 못 받은 건 카드에 "불러오는 중" 자리표시
+    let marked = false;
+    idRows.forEach(row => {
+      const rec = records.find(r => String(r.id) === String(row.id));
+      if (rec && !rec.photo && !rec.hasPhoto) { rec.hasPhoto = true; marked = true; }
+    });
+    if (marked) renderApp();
+
+    const visibleIds = new Set(getFilteredRecords().slice(0, visibleCount).map(r => String(r.id)));
     for (const row of idRows) {
+      if (!visibleIds.has(String(row.id))) continue;          // 화면에 안 보이는 기록의 사진은 아직 받지 않음
       const rec = records.find(r => String(r.id) === String(row.id));
       if (!rec || rec.photo) continue;
-      const { data, error: e2 } = await supabaseClient.from('records').select('photo').eq('id', String(row.id)).maybeSingle();
-      if (e2 || !data || !data.photo) continue;
-      rec.photo = data.photo;
-      try { localStorage.setItem(STORAGE_KEY_RECORDS + '_photo_' + rec.id, data.photo); } catch (e) { /* 용량 초과는 무시 */ }
-      renderApp();
+      let ok = false;
+      for (let t = 0; t < 2 && !ok; t++) {
+        try {
+          const { data, error: e2 } = await supabaseClient.from('records').select('photo').eq('id', String(row.id)).maybeSingle();
+          if (!e2 && data && data.photo) {
+            rec.photo = data.photo;
+            try { localStorage.setItem(STORAGE_KEY_RECORDS + '_photo_' + rec.id, data.photo); } catch (e) { /* 용량 초과는 무시 */ }
+            renderApp();
+            ok = true;
+          } else if (e2) {
+            lastSyncError = '사진 불러오기: ' + e2.message;
+          }
+        } catch (e3) {
+          lastSyncError = '사진 불러오기: ' + (e3 && e3.message ? e3.message : e3);
+        }
+      }
+      if (!ok) failed++;
     }
   } catch (err) {
+    failed++;
+    lastSyncError = '사진 목록: ' + (err && err.message ? err.message : err);
     console.warn('Photo load warning:', err);
   } finally {
     photoLoadRunning = false;
+  }
+  photoFailCount = failed;
+  renderApp();
+  if (photoReloadQueued) { photoReloadQueued = false; loadMissingPhotos(); return; }
+  if (failed > 0) {
+    clearTimeout(photoRetryTimer);
+    photoRetryTimer = setTimeout(loadMissingPhotos, 10000);   // 10초 뒤 한 번 더
+  }
+}
+
+function retryPhotos() {
+  clearTimeout(photoRetryTimer);
+  loadMissingPhotos();
+}
+
+// 서버에 올리지 못한 기록(unsynced)을 다시 올린다
+let pendingUploadRunning = false;
+async function retryPendingUploads() {
+  if (!supabaseClient || pendingUploadRunning) return;
+  const pending = records.filter(r => r.unsynced);
+  if (pending.length === 0) return;
+  pendingUploadRunning = true;
+  try {
+    for (const rec of pending) {
+      const { error } = await supabaseClient.from('records').insert([recordToDbRow(rec)]);
+      if (!error || error.code === '23505') {          // 성공 또는 이미 있음
+        delete rec.unsynced;
+      } else {
+        lastSyncError = '업로드: ' + error.message;
+      }
+    }
+    saveLocalCache();
+    renderApp();
+  } catch (e) {
+    lastSyncError = '업로드: ' + (e && e.message ? e.message : e);
+  } finally {
+    pendingUploadRunning = false;
   }
 }
 
@@ -542,6 +614,7 @@ function subscribeToRealtime() {
         if (payload.eventType === 'INSERT') {
           const newRec = dbRowToRecord(payload.new);
           if (!records.some(r => r.id === newRec.id)) {
+            if (!newRec.photo) { newRec.hasPhoto = true; setTimeout(retryPhotos, 1500); }   // 큰 사진은 실시간 전달에서 빠질 수 있음
             records.unshift(newRec);
             saveLocalCache();
             renderApp();
@@ -556,6 +629,7 @@ function subscribeToRealtime() {
           const updatedRec = dbRowToRecord(payload.new);
           const idx = records.findIndex(r => String(r.id) === String(updatedRec.id));
           if (idx !== -1) {
+            if (!updatedRec.photo && records[idx].photo) updatedRec.photo = records[idx].photo;   // 변경 안 된 사진 보존
             records[idx] = updatedRec;
             saveLocalCache();
             renderApp();
@@ -789,6 +863,19 @@ function updateBentoCards(lastFeeding, lastSighting) {
   }
 }
 
+function getFilteredRecords() {
+  const sorted = [...records].sort((a, b) => new Date(b.time) - new Date(a.time));
+  if (currentFilter === 'feeding') return sorted.filter(r => r.type === 'feeding');
+  if (currentFilter === 'sighting') return sorted.filter(r => r.type === 'sighting');
+  return sorted;
+}
+
+function showMoreRecords() {
+  visibleCount += PAGE_SIZE;
+  renderApp();
+  loadMissingPhotos();
+}
+
 function updateHistoryList(sortedRecords) {
   const listEl = document.getElementById('history-list');
   const countEl = document.getElementById('history-count');
@@ -812,6 +899,9 @@ function updateHistoryList(sortedRecords) {
     return;
   }
 
+  const totalFiltered = filtered.length;
+  filtered = filtered.slice(0, visibleCount);
+
   listEl.innerHTML = filtered.map(item => {
     const isFeeding = item.type === 'feeding';
     const mainIcon = isFeeding ? '🍚' : '👀';
@@ -831,6 +921,10 @@ function updateHistoryList(sortedRecords) {
       ? `<div class="mt-2 relative w-16 h-16 rounded-xl overflow-hidden border border-outline-variant cursor-pointer hover:opacity-90 transition-opacity" onclick="openPhotoZoom('${item.photo}')">
            <img src="${item.photo}" class="w-full h-full object-cover">
          </div>`
+      : '';
+
+    const photoPlaceholder = (!item.photo && item.hasPhoto)
+      ? `<button type="button" onclick="retryPhotos()" class="mt-2 w-16 h-16 rounded-xl border border-dashed border-outline-variant bg-surface-container/60 text-[10px] font-bold text-on-surface-variant flex flex-col items-center justify-center">📷<span>${photoFailCount > 0 ? '다시 불러오기' : '불러오는 중'}</span></button>`
       : '';
 
     const memoHTML = item.memo
@@ -857,12 +951,14 @@ function updateHistoryList(sortedRecords) {
           </div>
           <p class="text-xs text-on-surface font-medium">${contentText}</p>
           ${memoHTML}
-          ${photoHTML}
+          ${photoHTML}${photoPlaceholder}
           ${reactionBarHTML(item)}
         </div>
       </div>
     `;
-  }).join('');
+  }).join('') + (totalFiltered > filtered.length
+    ? `<button type="button" onclick="showMoreRecords()" class="w-full py-2.5 text-xs font-bold rounded-2xl border-2 border-dashed border-outline-variant text-on-surface-variant bg-surface-bright/70">더 보기 (${totalFiltered - filtered.length}건 남음) 🐾</button>`
+    : '');
   updateReceivedChip();
 }
 
@@ -1035,13 +1131,21 @@ async function handleRecordSubmit(event) {
       const { error } = await supabaseClient.from('records').insert([dbRow]);
       if (error) {
         console.warn('Supabase insert warning:', error.message);
+        lastSyncError = '업로드: ' + error.message;
+        newRecord.unsynced = true;
+        saveLocalCache();
         updateSyncBadge('local');
+        showReactionToast('⚠️ 서버에 저장하지 못했어요. 연결되면 자동으로 다시 올릴게요');
       } else {
         updateSyncBadge('connected');
       }
     } catch (err) {
       console.error('Supabase insert failed:', err);
+      lastSyncError = '업로드: ' + (err && err.message ? err.message : err);
+      newRecord.unsynced = true;
+      saveLocalCache();
       updateSyncBadge('local');
+      showReactionToast('⚠️ 서버에 저장하지 못했어요. 연결되면 자동으로 다시 올릴게요');
     }
   }
 }
@@ -1068,6 +1172,7 @@ async function deleteRecord(id) {
 
 function setFilter(filter) {
   currentFilter = filter;
+  visibleCount = PAGE_SIZE;
   ['all', 'feeding', 'sighting'].forEach(f => {
     const btn = document.getElementById(`filter-${f}`);
     if (btn) {
@@ -1079,6 +1184,7 @@ function setFilter(filter) {
     }
   });
   renderApp();
+  loadMissingPhotos();        // 바뀐 탭에서 보이는 기록의 사진 받기
 }
 
 /* ==========================================================================
